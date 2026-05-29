@@ -4,7 +4,7 @@
 
 ## Active
 
-1. **Define CLI grammar + audit log contracts** in `docs/reference/contracts.md`. Captures the semver-disciplined surface downstream consumers (the `gateway` product, future tools) depend on: subcommand names, flag names, exit codes, JSONL schema. Breaking changes require a major version bump.
+_(none — substrate completeness items shipped; next cross-cutting chunk is CI/CD + Homebrew tap, see below.)_
 
 ## Soon
 

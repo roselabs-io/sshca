@@ -31,6 +31,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — [docs/reference/contracts.md](reference/contracts.md) shipped. Declares the three semver-disciplined surfaces downstream consumers depend on (CLI grammar, JSONL audit log schema, CA directory layout). All of v0.x is *intended-stable but provisional*; v1.0 is the cutoff where the discipline becomes contractual. Documents exit-code conventions, environment variables, expiry-parsing semantics for the `valid` field, and the deprecation cycle for breaking changes.
 - **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against Patrick's live audit log — correctly surfaces the gw-user certs from 2026-05-28 that expired overnight, the freshly renewed one expiring in ~7h, and the +52w tunnel + host certs.
 - **2026-05-29** — Cert mechanics reference doc ported from upstream `gateway/docs/reference/ssh/certs.md` → [docs/reference/certs.md](reference/certs.md). Adapted to sshca's standalone context (CLI commands shown as `sshca cert sign` not `gwctl cert sign`; §8 principal taxonomy framed as one OT-flavored worked example, not the canonical schema). Gateway repo's references updated to point to this copy.
 - **2026-05-29** — v0.1.0-dev: cert/CA code migrated from upstream [`roselabs-io/gateway`](https://github.com/roselabs-io/gateway). Cleanups during the move:
@@ -42,8 +43,6 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## What's NOT here yet
 
-- `docs/reference/contracts.md` — semver-disciplined surface for downstream consumers — backlog item #2
-- `sshca cert list --expiring` — backlog item #1
 - CI/CD — no GitHub Actions yet
 - Distribution — no Homebrew tap, no `go install` instructions yet
 
