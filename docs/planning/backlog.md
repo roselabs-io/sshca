@@ -9,8 +9,9 @@ _(none — substrate completeness items shipped; next cross-cutting chunk is CI/
 ## Soon
 
 - **First sshca-series ADR.** First independent decision sshca makes after the migration — likely a flag rename or output-format polish discovered as the tool gets real usage.
-- **CI/CD setup.** GitHub Actions: build, test, release. Single binary per platform (darwin-arm64, darwin-amd64, linux-amd64, linux-arm64).
-- **Homebrew tap.** `roselabs-io/homebrew-tools` with `sshca` as the first formula.
+- **Tagged release pipeline.** `.github/workflows/release.yml` triggered on `v*` tag push — builds binaries for the 6-platform matrix, attaches them to a GitHub Release with auto-generated changelog. CI is already in place (`.github/workflows/ci.yml`); release is the next step.
+- **Homebrew tap.** `roselabs-io/homebrew-tools` with `sshca` (and `bastionhub`) as formulae. Requires a tagged release first to pin the formula's URL + sha256.
+- **Real unit tests.** `parseSSHKeygenDuration`, `parseExpiry`, `inferPrincipalFromCert` are pure functions worth covering. CI's `go test ./...` step is wired and currently passes vacuously.
 - **`sshca --help` polish pass.** Every flag has a one-line "when you'd use it" explanation. Bus-factor-zero criterion.
 - **README usage examples.** Real `sshca ca init → cert sign → cert renew → cert revoke` walk-through. The README is the bus-factor-zero touchstone — should be enough on its own to operate the tool.
 

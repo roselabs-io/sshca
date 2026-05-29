@@ -31,6 +31,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — GitHub Actions CI shipped at `.github/workflows/ci.yml`. 6-platform matrix (linux/darwin/windows × amd64/arm64) runs `go vet` + `go build` per cell on every push to main and every PR. `go test ./...` runs once on linux/amd64 as a placeholder (no test files yet — will become valuable once `parseSSHKeygenDuration`/`parseExpiry`/`inferPrincipalFromCert` get unit tests). Locally-validated: all 6 cells pass vet + build (binary sizes 5.3-5.6 MB across platforms).
 - **2026-05-29** — [docs/reference/contracts.md](reference/contracts.md) shipped. Declares the three semver-disciplined surfaces downstream consumers depend on (CLI grammar, JSONL audit log schema, CA directory layout). All of v0.x is *intended-stable but provisional*; v1.0 is the cutoff where the discipline becomes contractual. Documents exit-code conventions, environment variables, expiry-parsing semantics for the `valid` field, and the deprecation cycle for breaking changes.
 - **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against Patrick's live audit log — correctly surfaces the gw-user certs from 2026-05-28 that expired overnight, the freshly renewed one expiring in ~7h, and the +52w tunnel + host certs.
 - **2026-05-29** — Cert mechanics reference doc ported from upstream `gateway/docs/reference/ssh/certs.md` → [docs/reference/certs.md](reference/certs.md). Adapted to sshca's standalone context (CLI commands shown as `sshca cert sign` not `gwctl cert sign`; §8 principal taxonomy framed as one OT-flavored worked example, not the canonical schema). Gateway repo's references updated to point to this copy.
@@ -43,8 +44,8 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## What's NOT here yet
 
-- CI/CD — no GitHub Actions yet
-- Distribution — no Homebrew tap, no `go install` instructions yet
+- **Tagged releases + Homebrew tap.** CI is in place (build + vet matrix on every push/PR); the next step is `.github/workflows/release.yml` triggered on `v*` tag push that attaches binaries to a GitHub Release, and a shared `roselabs-io/homebrew-tools` tap with sshca + bastionhub formulae.
+- **Real unit tests.** `go test ./...` is wired into CI as a placeholder (currently passes because there are no test files). Pure functions worth covering: `parseSSHKeygenDuration`, `parseExpiry`, `inferPrincipalFromCert`, `signCert` happy path.
 
 ## See also
 
