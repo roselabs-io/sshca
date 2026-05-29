@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -186,6 +188,99 @@ func inferPrincipalFromCert(certFile string) string {
 }
 
 // -----------------------------------------------------------------------------
+// Audit log + expiry parsing (used by cert list)
+// -----------------------------------------------------------------------------
+
+// logEntry mirrors the JSONL audit log schema at <ca-dir>/issuance-log.jsonl.
+// This schema is part of sshca's contract surface — downstream consumers
+// (the gateway product, future tools) depend on the field names + types.
+type logEntry struct {
+	TS         string `json:"ts"`
+	CA         string `json:"ca"`
+	KeyID      string `json:"key_id"`
+	Principals string `json:"principals"`
+	Valid      string `json:"valid"`
+	Pubkey     string `json:"pubkey"`
+	Cert       string `json:"cert"`
+}
+
+// parseSSHKeygenDuration parses ssh-keygen -V style durations: "8h", "52w",
+// "30d", "60m", "300s". Go's time.ParseDuration handles s/m/h; we add d and w.
+func parseSSHKeygenDuration(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	last := s[len(s)-1:]
+	if last == "w" || last == "d" {
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, last), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parsing %s: %w", s, err)
+		}
+		mul := 24 * time.Hour
+		if last == "w" {
+			mul = 7 * 24 * time.Hour
+		}
+		return time.Duration(n) * mul, nil
+	}
+	return time.ParseDuration(s)
+}
+
+// parseExpiry returns the cert's expires_at given its validity string (from
+// the `valid` audit log field) and issuance timestamp (`ts`).
+// Second return is true if the cert has a finite expiry; false for "always".
+func parseExpiry(validStr, tsStr string) (time.Time, bool, error) {
+	ts, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parsing ts: %w", err)
+	}
+	if validStr == "always" {
+		return time.Time{}, false, nil
+	}
+	if strings.HasPrefix(validStr, "+") {
+		d, err := parseSSHKeygenDuration(strings.TrimPrefix(validStr, "+"))
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		return ts.Add(d), true, nil
+	}
+	if strings.Contains(validStr, ":") {
+		parts := strings.SplitN(validStr, ":", 2)
+		upper := parts[1]
+		if upper == "always" {
+			return time.Time{}, false, nil
+		}
+		if strings.HasPrefix(upper, "+") {
+			d, err := parseSSHKeygenDuration(strings.TrimPrefix(upper, "+"))
+			if err != nil {
+				return time.Time{}, false, err
+			}
+			return ts.Add(d), true, nil
+		}
+		if len(upper) == 8 {
+			t, err := time.Parse("20060102", upper)
+			return t, err == nil, err
+		}
+		if len(upper) == 14 {
+			t, err := time.Parse("20060102150405", upper)
+			return t, err == nil, err
+		}
+		return time.Time{}, false, fmt.Errorf("unparseable upper bound %q", upper)
+	}
+	return time.Time{}, false, fmt.Errorf("unparseable validity %q", validStr)
+}
+
+// formatTimeLeft returns a human-readable signed duration: "3h53m" for future,
+// "-14h0m" for past. Truncated to minute precision.
+func formatTimeLeft(d time.Duration) string {
+	sign := ""
+	if d < 0 {
+		sign = "-"
+		d = -d
+	}
+	return sign + d.Truncate(time.Minute).String()
+}
+
+// -----------------------------------------------------------------------------
 // Cert — sign, list, inspect, renew, revoke, krl
 // -----------------------------------------------------------------------------
 
@@ -220,8 +315,10 @@ func certSignCmd(_ context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// certListCmd: tails the JSONL audit log. Optionally filter by principal,
-// which switches to a human-readable table.
+// certListCmd: tails the JSONL audit log.
+//   - No filters: raw JSONL dump (backwards-compatible).
+//   - --principal X: tabular filter to that principal.
+//   - --expiring DUR / --expired: tabular filter by expiry; can compose with --principal.
 func certListCmd(_ context.Context, cmd *cli.Command) error {
 	dir := caDirFromFlag(cmd)
 	logPath := filepath.Join(dir, issuanceLogName)
@@ -233,19 +330,19 @@ func certListCmd(_ context.Context, cmd *cli.Command) error {
 		}
 		return cli.Exit(err.Error(), 1)
 	}
+
 	principalFilter := cmd.String("principal")
-	if principalFilter == "" {
+	expiringWithin := cmd.String("expiring")
+	showExpired := cmd.Bool("expired")
+
+	// No filters → raw JSONL (backwards-compatible).
+	if principalFilter == "" && expiringWithin == "" && !showExpired {
 		fmt.Print(string(data))
 		return nil
 	}
-	type logEntry struct {
-		TS         string `json:"ts"`
-		CA         string `json:"ca"`
-		KeyID      string `json:"key_id"`
-		Principals string `json:"principals"`
-		Valid      string `json:"valid"`
-	}
-	var matches []logEntry
+
+	// Parse all entries.
+	var entries []logEntry
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		if line == "" {
 			continue
@@ -254,20 +351,107 @@ func certListCmd(_ context.Context, cmd *cli.Command) error {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		for _, p := range strings.Split(entry.Principals, ",") {
-			if strings.TrimSpace(p) == principalFilter {
-				matches = append(matches, entry)
-				break
+		entries = append(entries, entry)
+	}
+
+	// Apply principal filter if requested.
+	if principalFilter != "" {
+		var filtered []logEntry
+		for _, e := range entries {
+			for _, p := range strings.Split(e.Principals, ",") {
+				if strings.TrimSpace(p) == principalFilter {
+					filtered = append(filtered, e)
+					break
+				}
 			}
 		}
+		entries = filtered
 	}
-	if len(matches) == 0 {
+
+	// Expiry-based view (either --expiring or --expired set).
+	if expiringWithin != "" || showExpired {
+		var window time.Duration
+		if expiringWithin != "" {
+			window, err = parseSSHKeygenDuration(expiringWithin)
+			if err != nil {
+				return cli.Exit(fmt.Sprintf("invalid --expiring value %q: %v", expiringWithin, err), 1)
+			}
+		}
+		now := time.Now().UTC()
+		type entryWithExpiry struct {
+			logEntry
+			expiresAt time.Time
+		}
+		var matches []entryWithExpiry
+		for _, e := range entries {
+			exp, has, parseErr := parseExpiry(e.Valid, e.TS)
+			if parseErr != nil || !has {
+				continue
+			}
+			isExpired := !exp.After(now)
+			isExpiring := exp.After(now) && exp.Before(now.Add(window))
+			include := (showExpired && isExpired) || (expiringWithin != "" && isExpiring)
+			if include {
+				matches = append(matches, entryWithExpiry{logEntry: e, expiresAt: exp})
+			}
+		}
+		sort.Slice(matches, func(i, j int) bool {
+			return matches[i].expiresAt.Before(matches[j].expiresAt)
+		})
+
+		var header string
+		switch {
+		case expiringWithin != "" && showExpired:
+			header = fmt.Sprintf("Certs expiring within %s or already expired (relative to %s):", expiringWithin, now.Format(time.RFC3339))
+		case expiringWithin != "":
+			header = fmt.Sprintf("Certs expiring within %s (relative to %s):", expiringWithin, now.Format(time.RFC3339))
+		case showExpired:
+			header = fmt.Sprintf("Expired certs (relative to %s):", now.Format(time.RFC3339))
+		}
+		if principalFilter != "" {
+			header += fmt.Sprintf(" — filtered to principal=%q", principalFilter)
+		}
+		fmt.Println(header)
+		if len(matches) == 0 {
+			fmt.Println()
+			fmt.Println("(no matching certs)")
+			return nil
+		}
+		fmt.Println()
+		fmt.Printf("%-55s %-15s %-21s %-12s %s\n", "KEY_ID", "PRINCIPALS", "EXPIRES_AT", "TIME_LEFT", "STATUS")
+		for _, m := range matches {
+			kid := m.KeyID
+			if len(kid) > 55 {
+				kid = kid[:54] + "…"
+			}
+			principals := m.Principals
+			if len(principals) > 15 {
+				principals = principals[:14] + "…"
+			}
+			status := "EXPIRING"
+			if !m.expiresAt.After(now) {
+				status = "EXPIRED"
+			}
+			fmt.Printf("%-55s %-15s %-21s %-12s %s\n",
+				kid, principals,
+				m.expiresAt.Format(time.RFC3339),
+				formatTimeLeft(m.expiresAt.Sub(now)),
+				status,
+			)
+		}
+		fmt.Println()
+		fmt.Println("Use `sshca cert renew --pubkey-file <pubkey>` to re-sign with the existing cert's principal.")
+		return nil
+	}
+
+	// Principal-only filter (tabular).
+	if len(entries) == 0 {
 		fmt.Printf("(no certs with principal=%q in issuance log)\n", principalFilter)
 		return nil
 	}
 	fmt.Printf("Certs with principal=%q — chronological, most recent last:\n\n", principalFilter)
 	fmt.Printf("%-55s %-10s %-22s\n", "KEY_ID", "VALIDITY", "ISSUED (UTC)")
-	for _, e := range matches {
+	for _, e := range entries {
 		kid := e.KeyID
 		if len(kid) > 55 {
 			kid = kid[:54] + "…"
@@ -483,9 +667,11 @@ func main() {
 					},
 					{
 						Name:  "list",
-						Usage: "tail the issuance log (raw JSONL by default; --principal X for a tabular filter)",
+						Usage: "tail the issuance log (raw JSONL by default; --principal / --expiring / --expired switch to a table)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "principal", Usage: "filter to entries with this principal (switches to a human-readable table)"},
+							&cli.StringFlag{Name: "principal", Usage: "filter to entries with this principal"},
+							&cli.StringFlag{Name: "expiring", Usage: "show certs expiring within DURATION (e.g. 24h, 7d, 4w)"},
+							&cli.BoolFlag{Name: "expired", Usage: "include already-expired certs in the expiry view"},
 							dirFlag,
 						},
 						Action: certListCmd,

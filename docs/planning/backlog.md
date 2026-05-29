@@ -4,8 +4,7 @@
 
 ## Active
 
-1. **`sshca cert list --expiring [DURATION]`** for proactive renewal. Parse the `valid` field from JSONL audit log, compute `expires_at = ts + valid`, filter to entries within a window (default 24h). Tabular output: KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT. Also `--expired` flag for already-expired certs. Core bus-factor-zero feature — catches "the cert nobody renewed" before 3am.
-2. **Define CLI grammar + audit log contracts** in `docs/reference/contracts.md`. Captures the semver-disciplined surface downstream consumers (the `gateway` product, future tools) depend on: subcommand names, flag names, exit codes, JSONL schema. Breaking changes require a major version bump.
+1. **Define CLI grammar + audit log contracts** in `docs/reference/contracts.md`. Captures the semver-disciplined surface downstream consumers (the `gateway` product, future tools) depend on: subcommand names, flag names, exit codes, JSONL schema. Breaking changes require a major version bump.
 
 ## Soon
 

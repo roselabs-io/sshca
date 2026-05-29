@@ -11,7 +11,7 @@
 - `sshca ca init` — generates `user_ca` + `host_ca` keypairs with correct perms (0600)
 - `sshca ca show` — prints CA pubkeys + SHA256 fingerprints
 - `sshca cert sign --ca user|host --principal X --valid +8h --key-id ID <pubkey>` — signs a cert; writes a JSONL audit entry
-- `sshca cert list` — raw JSONL tail of the audit log; `--principal X` switches to a tabular filter
+- `sshca cert list` — raw JSONL tail of the audit log; `--principal X` switches to a tabular filter; `--expiring DURATION` and `--expired` switch to an expiry-based view (composable with `--principal`)
 - `sshca cert inspect <cert-file>` — human-readable cert contents (wraps `ssh-keygen -L`)
 - `sshca cert renew --pubkey-file PATH [--ship DEST]` — re-signs with principal auto-inferred from the existing `<pubkey>-cert.pub`; optional scp to a destination
 - `sshca cert revoke --ca user|host --key-id ID [--ship DEST]` — adds the cert to the local KRL; optional scp to a destination sshd
@@ -31,6 +31,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against Patrick's live audit log — correctly surfaces the gw-user certs from 2026-05-28 that expired overnight, the freshly renewed one expiring in ~7h, and the +52w tunnel + host certs.
 - **2026-05-29** — Cert mechanics reference doc ported from upstream `gateway/docs/reference/ssh/certs.md` → [docs/reference/certs.md](reference/certs.md). Adapted to sshca's standalone context (CLI commands shown as `sshca cert sign` not `gwctl cert sign`; §8 principal taxonomy framed as one OT-flavored worked example, not the canonical schema). Gateway repo's references updated to point to this copy.
 - **2026-05-29** — v0.1.0-dev: cert/CA code migrated from upstream [`roselabs-io/gateway`](https://github.com/roselabs-io/gateway). Cleanups during the move:
   - `--ship-bastion` (which depended on gateway-product config) → generic `--ship DEST` taking an explicit scp target
