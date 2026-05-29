@@ -27,11 +27,47 @@ SSH certificates only. No X.509, no TLS, no ACME. The gap that justifies this to
 
 ## Install
 
-(coming when v0.1 ships)
+From source (until Homebrew tap lands):
 
-## Usage
+```sh
+git clone https://github.com/roselabs-io/sshca.git
+cd sshca
+go build -o sshca .
+```
 
-(coming when commands land)
+## Quick start
+
+```sh
+# 1. Create the CA (one-time)
+sshca ca init --dir ./ca
+
+# 2. Sign a cert for an existing pubkey
+sshca cert sign --ca user --principal gw-tunnel \
+    --valid +8h --key-id alice-bastion-20260529 \
+    --dir ./ca alice.pub
+# → writes alice-cert.pub + a JSONL audit entry
+
+# 3. Inspect any cert in human-readable form
+sshca cert inspect alice-cert.pub
+
+# 4. Tail the audit log (raw JSONL, or filter by principal for a table)
+sshca cert list --dir ./ca
+sshca cert list --principal gw-tunnel --dir ./ca
+
+# 5. Renew (principal auto-inferred from the existing <pubkey>-cert.pub)
+sshca cert renew --pubkey-file alice.pub --dir ./ca
+# Optional: ship the resulting cert via scp
+sshca cert renew --pubkey-file alice.pub --dir ./ca \
+    --ship alice@laptop:/Users/alice/.ssh/
+
+# 6. Revoke a cert
+sshca cert revoke --ca user --key-id alice-bastion-20260529 --dir ./ca
+# Optional: ship the KRL to the sshd that needs it
+sshca cert revoke --ca user --key-id alice-bastion-20260529 --dir ./ca \
+    --ship root@bastion:/etc/ssh/revoked_keys.krl
+```
+
+Override the default CA directory (`./ca`) with `--dir <path>` or `SSHCA_CA_DIR=<path>`.
 
 ## See also
 
