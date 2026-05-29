@@ -31,6 +31,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — Release pipeline + unit tests shipped. `.github/workflows/release.yml` triggered on `v*` tag push builds the 6-platform matrix with `-ldflags "-X main.version=<tag>"` injection, packages each binary as `.tar.gz` (Unix) / `.zip` (Windows), generates SHA-256 checksums, and attaches everything to an auto-released GitHub Release. `main.go`'s `version` flipped from `const` to `var` to enable the injection. 9 unit + integration tests in `main_test.go` cover `parseSSHKeygenDuration` (all units + negative + error cases), `parseExpiry` (relative / absolute / `always` / range forms), `formatTimeLeft` (signed truncated durations), and `signCert` integration (user-CA + host-CA happy paths + audit log shape + `inferPrincipalFromCert` round-trip + invalid-CA + missing-CA errors). All pass locally; CI's previously-vacuous `go test ./...` step now has real coverage.
 - **2026-05-29** — GitHub Actions CI shipped at `.github/workflows/ci.yml`. 6-platform matrix (linux/darwin/windows × amd64/arm64) runs `go vet` + `go build` per cell on every push to main and every PR. `go test ./...` runs once on linux/amd64 as a placeholder (no test files yet — will become valuable once `parseSSHKeygenDuration`/`parseExpiry`/`inferPrincipalFromCert` get unit tests). Locally-validated: all 6 cells pass vet + build (binary sizes 5.3-5.6 MB across platforms).
 - **2026-05-29** — [docs/reference/contracts.md](reference/contracts.md) shipped. Declares the three semver-disciplined surfaces downstream consumers depend on (CLI grammar, JSONL audit log schema, CA directory layout). All of v0.x is *intended-stable but provisional*; v1.0 is the cutoff where the discipline becomes contractual. Documents exit-code conventions, environment variables, expiry-parsing semantics for the `valid` field, and the deprecation cycle for breaking changes.
 - **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against Patrick's live audit log — correctly surfaces the gw-user certs from 2026-05-28 that expired overnight, the freshly renewed one expiring in ~7h, and the +52w tunnel + host certs.
@@ -44,8 +45,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## What's NOT here yet
 
-- **Tagged releases + Homebrew tap.** CI is in place (build + vet matrix on every push/PR); the next step is `.github/workflows/release.yml` triggered on `v*` tag push that attaches binaries to a GitHub Release, and a shared `roselabs-io/homebrew-tools` tap with sshca + bastionhub formulae.
-- **Real unit tests.** `go test ./...` is wired into CI as a placeholder (currently passes because there are no test files). Pure functions worth covering: `parseSSHKeygenDuration`, `parseExpiry`, `inferPrincipalFromCert`, `signCert` happy path.
+- **First tagged release + Homebrew tap.** Release pipeline is in place (`.github/workflows/release.yml` on `v*` tag push). Tag `v0.1.0` to trigger the first GitHub Release; then the `roselabs-io/homebrew-tools` tap can land pointing at the release artifacts.
 
 ## See also
 

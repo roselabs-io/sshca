@@ -1,0 +1,102 @@
+# Release — triggered by pushing a tag matching v*.
+#
+# Builds the 6-platform release matrix, packages each as a
+# .tar.gz (Unix) or .zip (Windows), generates a sha256 checksums
+# manifest, and attaches everything to a GitHub Release with
+# auto-generated release notes.
+#
+# Version is injected via -ldflags so `sshca --version` reports
+# the actual git tag rather than the source-default "0.1.0-dev".
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # required to create the GitHub Release
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -trimpath \
+            -o dist/sshca${{ matrix.ext }} .
+
+      - name: Package
+        run: |
+          cd dist
+          archive_base="sshca-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "../${archive_base}.zip" sshca.exe
+          else
+            tar -czf "../${archive_base}.tar.gz" sshca
+          fi
+          cd ..
+          ls -la "${archive_base}".*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sshca-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: sshca-*-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum sshca-*-*.{tar.gz,zip} 2>/dev/null > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/sshca-*-*.tar.gz
+            dist/sshca-*-*.zip
+            dist/checksums.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

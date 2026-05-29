@@ -20,7 +20,11 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const version = "0.1.0-dev"
+// version is the sshca tool version. Defaults to "0.1.0-dev" during
+// local development; release builds override via:
+//   go build -ldflags "-X main.version=<tag>"
+// See .github/workflows/release.yml.
+var version = "0.1.0-dev"
 
 // -----------------------------------------------------------------------------
 // CA artifact paths
