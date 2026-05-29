@@ -1,0 +1,26 @@
+# Build artifacts
+sshca
+*.exe
+*.test
+*.out
+*.prof
+coverage.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CA artifacts — sensitive, never commit
+ca/
+*.pem
+*.key
+*-cert.pub.local
+
+# Local config
+*.local.yaml
