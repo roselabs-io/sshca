@@ -22,6 +22,6 @@ _(none — substrate completeness items shipped; next cross-cutting chunk is CI/
 
 ## Parked
 
-- **X.509 / TLS support.** Out of scope per upstream [ADR-006](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-006-bifurcate-cert-tool-from-gateway-product.md). SSH-only is the differentiator.
+- **X.509 / TLS support.** Out of scope per upstream ADR-006. SSH-only is the differentiator.
 - **A GUI / web UI.** Out of scope. CLI-first. If a UI ever appears, it ships separately and consumes sshca's CLI grammar contract.
 - **Policy-engine features** (roles, multi-tenancy, customer schemas). Belong in the consumer (the `gateway` product), not in sshca. Sshca stays schema-neutral.

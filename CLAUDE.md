@@ -18,17 +18,17 @@ A small, fast SSH-only certificate authority and management CLI. Single Go binar
 
 **What this isn't:**
 
-- An X.509 / TLS cert tool (see upstream [ADR-006](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-006-bifurcate-cert-tool-from-gateway-product.md) §"Scope: SSH-only, locked")
-- A bastion / connectivity tool (see upstream [ADR-008](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-008-extract-bastion-substrate-as-bastionhub.md) — that's `bastionhub`)
+- An X.509 / TLS cert tool (see upstream ADR-006 §"Scope: SSH-only, locked")
+- A bastion / connectivity tool (see upstream ADR-008 — that's `bastionhub`)
 - A policy engine — sshca is schema-neutral; multi-tenant policy (`roles.yaml`) lives in the consumer (the `gateway` product)
 
 ## Key principles
 
-1. **Bus factor zero.** A new hire reads the README and rotates the CA correctly. See upstream [ADR-006](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-006-bifurcate-cert-tool-from-gateway-product.md) §"Design principle: bus factor zero — operable without tribal knowledge".
+1. **Bus factor zero.** A new hire reads the README and rotates the CA correctly. See upstream ADR-006 §"Design principle: bus factor zero — operable without tribal knowledge".
 2. **SSH-only scope.** No X.509, no ACME, no TLS. Focus is the differentiator.
-3. **Thin wrapper over `ssh-keygen`.** Don't reinvent crypto. Differentiate at the UX + audit layer. See upstream [ADR-002](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-002-thin-ca-wrapper-not-step-ca-or-vault.md).
+3. **Thin wrapper over `ssh-keygen`.** Don't reinvent crypto. Differentiate at the UX + audit layer. See upstream ADR-002.
 4. **JSONL audit by default.** Every sign is recorded with `key_id`, principals, validity, timestamp. The audit log *is* the institutional memory.
-5. **Default-deny for cert grants.** Sensible defaults + explicit flags for everything that grants power. See upstream [ADR-004](https://github.com/roselabs-io/gateway/blob/main/docs/decisions/ADR-004-principal-taxonomy-default-no-shell.md).
+5. **Default-deny for cert grants.** Sensible defaults + explicit flags for everything that grants power. See upstream ADR-004.
 
 ## Contract surface (semver discipline)
 
@@ -61,5 +61,5 @@ Same trigger-action discipline as the upstream `gateway` repo:
 
 - [README.md](README.md) — public overview
 - [docs/decisions/inherited.md](docs/decisions/inherited.md) — upstream ADRs that motivated this repo
-- [github.com/roselabs-io/gateway](https://github.com/roselabs-io/gateway) — the OT product that consumes `sshca`
+- The OT-integrator product layer that consumes `sshca` (internal — not OSS).
 - [github.com/roselabs-io/bastionhub](https://github.com/roselabs-io/bastionhub) — sibling substrate tool (the SSH-bastion substrate sshca often pairs with)

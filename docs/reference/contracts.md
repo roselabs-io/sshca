@@ -1,6 +1,6 @@
 # Contract surface
 
-This document declares the surface area downstream consumers depend on. **Breaking changes here require a major version bump and a deprecation cycle.** The discipline holds even when the only consumer is a sibling tool in the same `roselabs-io/` org (today: the [`gateway`](https://github.com/roselabs-io/gateway) product and [`bastionhub`](https://github.com/roselabs-io/bastionhub)).
+This document declares the surface area downstream consumers depend on. **Breaking changes here require a major version bump and a deprecation cycle.** The discipline holds even when the only consumer is a sibling tool in the same `roselabs-io/` org (today: the `gateway` product and [`bastionhub`](https://github.com/roselabs-io/bastionhub)).
 
 Three surfaces are versioned:
 

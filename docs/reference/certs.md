@@ -4,7 +4,7 @@ The conceptual + mechanical reference for SSH certificates as used by `sshca`. S
 
 For engineers who've used SSH keys forever and want to understand certificates from the bytes up — what's inside one, how verification works, when they're worth it, when they're not.
 
-This doc was ported from the upstream [`gateway`](https://github.com/roselabs-io/gateway) repo (the OT-integrator project that motivated sshca's bus-factor-zero design) — see [docs/decisions/inherited.md](../decisions/inherited.md). The OT-flavored principal taxonomy in §8 reflects that origin; the rest is general SSH cert knowledge applicable to any cert deployment.
+This doc was ported from the upstream `gateway` repo (the OT-integrator project that motivated sshca's bus-factor-zero design) — see [docs/decisions/inherited.md](../decisions/inherited.md). The OT-flavored principal taxonomy in §8 reflects that origin; the rest is general SSH cert knowledge applicable to any cert deployment.
 
 > *Doc note:* §6 and §8 originally used `Match Principal <role>` syntax which is **not valid OpenSSH** (`Match` only takes `User`, `Group`, `Host`, `LocalAddress`, `LocalPort`, `RDomain`, `Address`). Corrected during a V0.6 walking-skeleton deploy in the upstream project; the actual mechanism is "principal matches target Unix username by default, override with `AuthorizedPrincipalsFile`/`Command`, role restrictions live in `Match User` blocks." See §6 and §8 below for the corrected patterns.
 
@@ -49,7 +49,7 @@ An SSH certificate is a public key with signed metadata. Concretely, the binary 
 | `public key` | The actual pubkey being certified (e.g. ed25519 point) |
 | `serial` | 64-bit issuer-assigned number, useful for revocation by serial |
 | `type` | `SSH2_CERT_TYPE_USER` (1) or `SSH2_CERT_TYPE_HOST` (2) — these are different things, see §4 |
-| `key_id` | **Free-form audit string.** Whatever the issuer wrote. Logged on auth — this is your audit primary key. Put `patrick@perso-mbp-2026-05-28T14:30Z-by-deploy-bot` and you'll thank yourself later. |
+| `key_id` | **Free-form audit string.** Whatever the issuer wrote. Logged on auth — this is your audit primary key. Put `alice@laptop-2026-05-28T14:30Z-by-deploy-bot` and you'll thank yourself later. |
 | `valid_principals` | List of allowed principals — for user certs, these are usernames or role-names the cert authorizes (`gw-user`, `debugger`, etc.); for host certs, these are hostnames |
 | `valid_after` | UNIX timestamp — earliest second the cert is valid |
 | `valid_before` | UNIX timestamp — first second the cert is no longer valid |
@@ -76,7 +76,7 @@ id_ed25519-cert.pub:
         Type: ssh-ed25519-cert-v01@openssh.com user certificate
         Public key: ED25519-CERT SHA256:qKvY+iHwhcmm2gIxAoFsVjUc8o7D1dQ7GH+IYB0725U
         Signing CA: ED25519 SHA256:7nN4D2... (using ssh-ed25519)
-        Key ID: "patrick@perso-mbp-2026-05-28"
+        Key ID: "alice@laptop-2026-05-28"
         Serial: 42
         Valid: from 2026-05-28T14:30:00 to 2026-05-28T22:30:00
         Principals:
@@ -252,7 +252,7 @@ This is the part most engineers blur. Permissions to a cert are decided in **thr
    This is your control plane — the policy ABOVE the CA.
    sshca is intentionally NOT this layer; it stays schema-neutral.
 
-   "Patrick can issue gw-user certs for himself, 8h max.
+   "Alice can issue gw-user certs for himself, 8h max.
     Only the GitHub Actions bot can issue gw-deployer certs.
     Customer-support team can issue debugger certs for the
     customer they're assigned to, valid during business hours."
@@ -331,7 +331,7 @@ The three levels:
 | **2. Cert content** | The cert file itself (signed, immutable) | Principals + validity + source + force-command + extensions | `sshca cert sign` wraps `ssh-keygen -s`. You don't build this; you call it. |
 | **3. Server enforcement** | `/etc/ssh/sshd_config` `Match User` blocks (one Unix user per role) + optionally `AuthorizedPrincipalsFile`/`Command` | What each role is allowed to do at sshd | OpenSSH's sshd. You configure once per role. |
 
-`sshca` lives squarely at Level 2 — the thin wrapper around `ssh-keygen -s` with sane defaults, JSONL audit, KRL UX, and renewal-by-principal-inference. Level 1 (issuance policy) is the differentiated layer above; for the OT-integrator case, that's the [`gateway`](https://github.com/roselabs-io/gateway) product. Level 3 (sshd enforcement) is vanilla OpenSSH; for the SSH-bastion case, the role drop-ins are shipped by [`bastionhub`](https://github.com/roselabs-io/bastionhub).
+`sshca` lives squarely at Level 2 — the thin wrapper around `ssh-keygen -s` with sane defaults, JSONL audit, KRL UX, and renewal-by-principal-inference. Level 1 (issuance policy) is the differentiated layer above; for the OT-integrator case, that's the `gateway` product. Level 3 (sshd enforcement) is vanilla OpenSSH; for the SSH-bastion case, the role drop-ins are shipped by [`bastionhub`](https://github.com/roselabs-io/bastionhub).
 
 ---
 
@@ -364,7 +364,7 @@ sshca cert sign \
     --ca user \
     --principal "gw-user" \
     --valid "+8h" \
-    --key-id "patrick@perso-mbp-2026-05-28T14:30Z" \
+    --key-id "alice@laptop-2026-05-28T14:30Z" \
     --dir ./ca \
     ~/.ssh/id_ed25519.pub
 ```
@@ -481,7 +481,7 @@ patrick:
     - principal: gw-edge-ssh-customer-001-controller-1
       max_validity: 4h
       source_addresses: [10.0.0.0/8]
-      requires_approval: false  # Patrick is on rotation for customer-001
+      requires_approval: false  # alice is on rotation for customer-001
 ```
 
 PR merges → CI runs the registry compiler → invokes `sshca cert sign` → emits cert artifact.
@@ -630,7 +630,7 @@ Sometimes it isn't. KRL = **Key Revocation List**. A compact binary file listing
 
 ```bash
 # sshca wraps the common cases:
-sshca cert revoke --ca user --key-id "patrick@perso-mbp-2026-05-28" --dir ./ca
+sshca cert revoke --ca user --key-id "alice@laptop-2026-05-28" --dir ./ca
 sshca cert revoke --ca user --serial 42 --dir ./ca
 sshca cert revoke --ca user --pubkey-file bad_key.pub --dir ./ca
 
@@ -757,7 +757,7 @@ The reason sshca exists at all is that *the operational discipline* around certs
 - [sshca README](../../README.md) — the public-facing pitch
 - [sshca CLAUDE.md](../../CLAUDE.md) — agent / contributor context
 - [docs/decisions/inherited.md](../decisions/inherited.md) — the upstream ADRs that motivated this tool
-- [github.com/roselabs-io/gateway](https://github.com/roselabs-io/gateway) — the OT-integrator project where sshca was born. Its `docs/reference/ssh/` has companion primers: [01-three-layer-stack](https://github.com/roselabs-io/gateway/blob/main/docs/reference/ssh/01-three-layer-stack.md), [02-tunnels](https://github.com/roselabs-io/gateway/blob/main/docs/reference/ssh/02-tunnels.md), [07-restricted-user](https://github.com/roselabs-io/gateway/blob/main/docs/reference/ssh/07-restricted-user.md), [keys.md](https://github.com/roselabs-io/gateway/blob/main/docs/reference/ssh/keys.md).
+- The OT-integrator project where sshca was born (internal — not OSS). Companion SSH primer docs (three-layer-stack, tunnels, restricted-user, keys) live there.
 - [github.com/roselabs-io/bastionhub](https://github.com/roselabs-io/bastionhub) — the SSH-bastion substrate; consumes sshca for cert signing.
 - [OpenSSH PROTOCOL.certkeys](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.certkeys) — the canonical cert format spec.
 

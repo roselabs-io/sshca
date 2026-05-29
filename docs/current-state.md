@@ -4,7 +4,7 @@
 
 ## Status
 
-**v0.1.0-dev** — core cert/CA commands implemented and smoke-tested end-to-end. Single ~5 MB binary, one dep (`urfave/cli/v3` v3.9.0).
+**v0.1.0** — core cert/CA commands implemented and smoke-tested end-to-end. Single ~5 MB binary, one dep (`urfave/cli/v3` v3.9.0).
 
 ## What works
 
@@ -31,12 +31,13 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — v0.1.0 tagged. First GitHub Release created via `.github/workflows/release.yml`: 6 platform binaries (linux/darwin/windows × amd64/arm64) + sha256 checksums attached, version injected via `-ldflags "-X main.version=v0.1.0"`.
 - **2026-05-29** — Release pipeline + unit tests shipped. `.github/workflows/release.yml` triggered on `v*` tag push builds the 6-platform matrix with `-ldflags "-X main.version=<tag>"` injection, packages each binary as `.tar.gz` (Unix) / `.zip` (Windows), generates SHA-256 checksums, and attaches everything to an auto-released GitHub Release. `main.go`'s `version` flipped from `const` to `var` to enable the injection. 9 unit + integration tests in `main_test.go` cover `parseSSHKeygenDuration` (all units + negative + error cases), `parseExpiry` (relative / absolute / `always` / range forms), `formatTimeLeft` (signed truncated durations), and `signCert` integration (user-CA + host-CA happy paths + audit log shape + `inferPrincipalFromCert` round-trip + invalid-CA + missing-CA errors). All pass locally; CI's previously-vacuous `go test ./...` step now has real coverage.
 - **2026-05-29** — GitHub Actions CI shipped at `.github/workflows/ci.yml`. 6-platform matrix (linux/darwin/windows × amd64/arm64) runs `go vet` + `go build` per cell on every push to main and every PR. `go test ./...` runs once on linux/amd64 as a placeholder (no test files yet — will become valuable once `parseSSHKeygenDuration`/`parseExpiry`/`inferPrincipalFromCert` get unit tests). Locally-validated: all 6 cells pass vet + build (binary sizes 5.3-5.6 MB across platforms).
 - **2026-05-29** — [docs/reference/contracts.md](reference/contracts.md) shipped. Declares the three semver-disciplined surfaces downstream consumers depend on (CLI grammar, JSONL audit log schema, CA directory layout). All of v0.x is *intended-stable but provisional*; v1.0 is the cutoff where the discipline becomes contractual. Documents exit-code conventions, environment variables, expiry-parsing semantics for the `valid` field, and the deprecation cycle for breaking changes.
-- **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against Patrick's live audit log — correctly surfaces the gw-user certs from 2026-05-28 that expired overnight, the freshly renewed one expiring in ~7h, and the +52w tunnel + host certs.
+- **2026-05-29** — `sshca cert list --expiring [DURATION]` + `--expired` shipped. Parses the JSONL `valid` field, computes expiry, filters certs by status. Tabular output with KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT, STATUS. Composable with `--principal`. Validated against a live audit log: correctly surfaces expired certs, freshly-renewed ones in the near-future window, and long-lived (+52w) tunnel + host certs.
 - **2026-05-29** — Cert mechanics reference doc ported from upstream `gateway/docs/reference/ssh/certs.md` → [docs/reference/certs.md](reference/certs.md). Adapted to sshca's standalone context (CLI commands shown as `sshca cert sign` not `gwctl cert sign`; §8 principal taxonomy framed as one OT-flavored worked example, not the canonical schema). Gateway repo's references updated to point to this copy.
-- **2026-05-29** — v0.1.0-dev: cert/CA code migrated from upstream [`roselabs-io/gateway`](https://github.com/roselabs-io/gateway). Cleanups during the move:
+- **2026-05-29** — v0.1.0-dev: cert/CA code migrated from upstream `roselabs-io/gateway`. Cleanups during the move:
   - `--ship-bastion` (which depended on gateway-product config) → generic `--ship DEST` taking an explicit scp target
   - `user issue/revoke/list` subcommands dropped — their functionality is already `cert sign --principal X` / `cert list --principal X` / `cert revoke --key-id X`, keeping sshca schema-neutral per upstream ADR-006
   - `GWCTL_CA_DIR` env var → `SSHCA_CA_DIR`
