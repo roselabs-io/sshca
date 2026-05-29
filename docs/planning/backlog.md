@@ -4,13 +4,12 @@
 
 ## Active
 
-1. **Port cert mechanics reference doc** from [`gateway/docs/reference/ssh/certs.md`](https://github.com/roselabs-io/gateway/blob/main/docs/reference/ssh/certs.md) into `sshca/docs/reference/certs.md`. Update cross-references to drop gateway-specific framing. The doc explains: what cert principals are, key-id semantics, KRL mechanics, force-command / source-address / valid-window options. Should be the canonical reference an operator reads before issuing their first cert.
+1. **`sshca cert list --expiring [DURATION]`** for proactive renewal. Parse the `valid` field from JSONL audit log, compute `expires_at = ts + valid`, filter to entries within a window (default 24h). Tabular output: KEY_ID, PRINCIPALS, EXPIRES_AT, TIME_LEFT. Also `--expired` flag for already-expired certs. Core bus-factor-zero feature — catches "the cert nobody renewed" before 3am.
 2. **Define CLI grammar + audit log contracts** in `docs/reference/contracts.md`. Captures the semver-disciplined surface downstream consumers (the `gateway` product, future tools) depend on: subcommand names, flag names, exit codes, JSONL schema. Breaking changes require a major version bump.
 
 ## Soon
 
 - **First sshca-series ADR.** First independent decision sshca makes after the migration — likely a flag rename or output-format polish discovered as the tool gets real usage.
-- **`sshca cert list --expiring`** for proactive renewal. Catches "the cert nobody renewed" before 3am. Core bus-factor-zero feature.
 - **CI/CD setup.** GitHub Actions: build, test, release. Single binary per platform (darwin-arm64, darwin-amd64, linux-amd64, linux-arm64).
 - **Homebrew tap.** `roselabs-io/homebrew-tools` with `sshca` as the first formula.
 - **`sshca --help` polish pass.** Every flag has a one-line "when you'd use it" explanation. Bus-factor-zero criterion.

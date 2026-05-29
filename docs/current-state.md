@@ -31,6 +31,7 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## Recently landed
 
+- **2026-05-29** — Cert mechanics reference doc ported from upstream `gateway/docs/reference/ssh/certs.md` → [docs/reference/certs.md](reference/certs.md). Adapted to sshca's standalone context (CLI commands shown as `sshca cert sign` not `gwctl cert sign`; §8 principal taxonomy framed as one OT-flavored worked example, not the canonical schema). Gateway repo's references updated to point to this copy.
 - **2026-05-29** — v0.1.0-dev: cert/CA code migrated from upstream [`roselabs-io/gateway`](https://github.com/roselabs-io/gateway). Cleanups during the move:
   - `--ship-bastion` (which depended on gateway-product config) → generic `--ship DEST` taking an explicit scp target
   - `user issue/revoke/list` subcommands dropped — their functionality is already `cert sign --principal X` / `cert list --principal X` / `cert revoke --key-id X`, keeping sshca schema-neutral per upstream ADR-006
@@ -40,8 +41,8 @@ This schema is part of sshca's contract surface — downstream tools (the `gatew
 
 ## What's NOT here yet
 
-- Cert mechanics reference doc (port from upstream `gateway/docs/reference/ssh/certs.md`) — backlog item #1
 - `docs/reference/contracts.md` — semver-disciplined surface for downstream consumers — backlog item #2
+- `sshca cert list --expiring` — backlog item #1
 - CI/CD — no GitHub Actions yet
 - Distribution — no Homebrew tap, no `go install` instructions yet
 
