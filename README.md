@@ -31,6 +31,7 @@ Beyond `ssh-keygen`, `sshca` adds:
 
 ```sh
 brew tap roselabs-io/tools
+brew trust roselabs-io/tools   # recent Homebrew refuses third-party taps otherwise
 brew install sshca
 ```
 
