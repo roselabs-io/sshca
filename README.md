@@ -1,39 +1,44 @@
 # sshca
 
-A small, fast SSH-only certificate authority and management CLI.
+An SSH certificate authority and management CLI. Single Go binary, one
+dependency (`urfave/cli/v3`). Linux, macOS and Windows.
 
-**v0.1.0** — initial release. Single Go binary, one dep (`urfave/cli/v3`). Linux + macOS + Windows.
+SSH certificates only — no X.509, no TLS, no ACME.
 
-## What it does
+## Overview
 
-Manages SSH certificate authorities and signs short-lived SSH certs for users and hosts. Wraps `ssh-keygen` with the things that turn it from "arcane" into "operable by anyone who reads the README":
+`sshca` maintains a local certificate authority and signs SSH certificates for
+users and hosts. It wraps `ssh-keygen`; it implements no cryptography of its
+own.
 
-- One-command CA init with correct permissions
-- JSONL audit log auto-populated on every sign
-- KRL-based revocation with one-command UX
-- Cert renewal with principal auto-inference from existing certs
-- `inspect` that reads like English, not raw `ssh-keygen -L` output
-- `cert list --expiring 24h` to catch the cert nobody renewed before it bites
-- Sensible defaults — no arcane flags
+A certificate binds a public key to a set of principals, a validity window
+enforced by sshd, and a key ID recorded in an append-only log. A server
+configured with `TrustedUserCAKeys` accepts any certificate signed by that CA,
+so per-machine `authorized_keys` files are not required.
 
-## Design principle: bus factor zero
+Beyond `ssh-keygen`, `sshca` adds:
 
-Cert operations are notorious for being "the thing only one person knows how to do." Renewal procedures rot on Confluence. CA passphrases live in someone's head. Expiry surprises take down prod at 3am. Revocation has never actually been tested.
-
-`sshca`'s acceptance criterion: **a new operator can rotate the CA correctly by reading this README, without asking anyone.**
-
-## Scope
-
-SSH certificates only. No X.509, no TLS, no ACME. The gap that justifies this tool is specifically SSH-cert ergonomics — TLS tooling is well-covered (`step-ca`, `cfssl`, ACME). Mixing both is what makes existing CA tools heavy.
+- CA creation with correct file permissions
+- A JSONL issuance log written on every signature
+- KRL-based revocation addressed by key ID, serial, or public key file
+- Renewal that reads principals from an existing certificate
+- Expiry queries over the issuance log
+- Optional `scp` of a signed certificate or updated KRL to a remote path
 
 ## Install
 
-### Homebrew (macOS + Linuxbrew)
+### Homebrew (macOS and Linuxbrew)
 
 ```sh
 brew tap roselabs-io/tools
 brew install sshca
 ```
+
+### Pre-built binaries
+
+[GitHub Releases](https://github.com/roselabs-io/sshca/releases) — `.tar.gz`
+for Unix, `.zip` for Windows, six platforms (linux/darwin/windows ×
+amd64/arm64), with SHA-256 checksums.
 
 ### From source
 
@@ -44,66 +49,92 @@ go build -o sshca .       # Linux, macOS
 go build -o sshca.exe .   # Windows
 ```
 
-### Pre-built binaries
+## Commands
 
-Download from [GitHub Releases](https://github.com/roselabs-io/sshca/releases) — `.tar.gz` for Unix, `.zip` for Windows, six platforms (linux/darwin/windows × amd64/arm64), SHA-256 checksums attached.
+| Command | Description |
+|---|---|
+| `ca init` | Generate `user_ca` and `host_ca` keypairs. Refuses to overwrite existing keys. |
+| `ca show` | Print CA public keys and fingerprints. |
+| `cert sign` | Sign a public key. Requires `--ca`, `--principal`, `--key-id`. |
+| `cert list` | Read the issuance log. JSONL by default; `--principal`, `--expiring` and `--expired` produce a table. |
+| `cert inspect` | Show a certificate's contents. Wraps `ssh-keygen -L`. |
+| `cert renew` | Re-sign a public key, taking principals from its existing certificate. |
+| `cert revoke` | Add a KRL entry by `--key-id`, `--serial` or `--pubkey-file`. |
+| `cert krl` | Show local KRL metadata. |
 
-## Quick start
+The CA directory defaults to `./ca` and is overridden by `--dir <path>` or
+`SSHCA_CA_DIR`.
+
+## Usage
 
 ```sh
-# 1. Create the CA (one-time)
+# Create the CA. One time.
 sshca ca init --dir ./ca
 
-# 2. Sign a cert for an existing pubkey
+# Sign a public key.
 sshca cert sign --ca user --principal gw-tunnel \
     --valid +8h --key-id alice-bastion-20260529 \
     --dir ./ca alice.pub
-# → writes alice-cert.pub + a JSONL audit entry
+# Writes alice-cert.pub and appends to the issuance log.
 
-# 3. Inspect any cert in human-readable form
+# Read a certificate.
 sshca cert inspect alice-cert.pub
 
-# 4. Tail the audit log (raw JSONL, or filter by principal for a table)
+# Read the issuance log.
 sshca cert list --dir ./ca
 sshca cert list --principal gw-tunnel --dir ./ca
 
-# 5. Catch expiring certs (e.g., in your shell prompt or a cron)
+# Query expiry.
 sshca cert list --expiring 24h --dir ./ca
 sshca cert list --expired --dir ./ca
 
-# 6. Renew (principal auto-inferred from the existing <pubkey>-cert.pub)
+# Renew. Principals are read from the existing alice-cert.pub.
 sshca cert renew --pubkey-file alice.pub --dir ./ca
-# Optional: ship the resulting cert via scp
 sshca cert renew --pubkey-file alice.pub --dir ./ca \
     --ship alice@laptop:/Users/alice/.ssh/
 
-# 7. Revoke a cert
+# Revoke. sshd re-reads the KRL on every connection.
 sshca cert revoke --ca user --key-id alice-bastion-20260529 --dir ./ca
-# Optional: ship the KRL to the sshd that needs it (sshd re-reads every connection)
 sshca cert revoke --ca user --key-id alice-bastion-20260529 --dir ./ca \
     --ship root@bastion:/etc/ssh/revoked_keys.krl
 ```
 
-Override the default CA directory (`./ca`) with `--dir <path>` or `SSHCA_CA_DIR=<path>`.
+`--valid` accepts `ssh-keygen` syntax: a relative window such as `+8h` or
+`+52w`, or an absolute range such as `20260601:20260701`. The default is `+8h`.
 
-## Stability promises
+## CA key storage
 
-Pre-1.0: minor releases may break things. Breaking changes will be called out in [CHANGELOG.md](CHANGELOG.md) with the rationale.
+The CA private keys are files in the CA directory, mode 0600, without a
+passphrase. There is one issuing machine.
 
-Post-1.0: [SemVer](https://semver.org/). Two surfaces are versioned:
+PKCS#11 tokens, KMS-backed signing and sealed hosts are not supported and are
+not planned. Callers requiring different custody can wrap `sshca cert sign`,
+which is the intended extension point.
 
-- **CLI grammar** — subcommand names, flag names, exit codes
-- **JSONL audit log schema** at `<ca-dir>/issuance-log.jsonl` — fields: `ts`, `ca`, `key_id`, `principals`, `valid`, `pubkey`, `cert`. New fields may be added in minor releases; existing fields will not be renamed or removed without a major version bump.
+Losing the CA directory means the CA cannot issue or renew any certificate, and
+every server trusting it must be reconfigured with a new CA. Back it up
+encrypted.
 
-See [CLAUDE.md](CLAUDE.md) "Contract surface" for details.
+## Scope
 
-## Roadmap
+Certificate mechanics only. `sshca` has no concept of users, roles, customers
+or environments, and applies no issuance policy — any caller that can run the
+binary can sign anything the CA can sign. Policy belongs in the caller.
 
-- **v0.2** — `roselabs-io/homebrew-tools` tap; tagged release pipeline polish.
-- **Soon** — CA storage upgrades (YubiKey, sealed-VPS, KMS-backed signing).
-- **Later** — `sshca rotate` for full CA rotation (currently a runbook-only operation).
+[bastionhub](https://github.com/roselabs-io/bastionhub) is one such caller.
 
-`sshca` is intentionally narrow. Multi-tenant policy (roles, customers, projects, principal vocabulary) belongs in the *consumer* of sshca, not here. See [bastionhub](https://github.com/roselabs-io/bastionhub) for a sibling substrate tool that pairs naturally.
+## Stability
+
+Pre-1.0: minor releases may include breaking changes, documented in
+[CHANGELOG.md](CHANGELOG.md).
+
+Post-1.0: [SemVer](https://semver.org/), covering two surfaces.
+
+- **CLI grammar** — subcommand names, flag names, exit codes.
+- **Issuance log schema** at `<ca-dir>/issuance-log.jsonl` — fields `ts`, `ca`,
+  `key_id`, `principals`, `valid`, `pubkey`, `cert`. Fields may be added in a
+  minor release; existing fields are not renamed or removed without a major
+  version bump.
 
 ## License
 

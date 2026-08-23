@@ -10,26 +10,26 @@ Initial release.
 
 ### Added — CA management
 
-- `sshca ca init` — generates user + host CA keypairs with correct permissions (0600). Refuses to overwrite existing CAs.
+- `sshca ca init` — generates user and host CA keypairs at mode 0600. Refuses to overwrite existing CAs.
 - `sshca ca show` — prints CA public keys + SHA-256 fingerprints.
 
 ### Added — Cert signing
 
-- `sshca cert sign --ca user|host --principal X --valid +8h --key-id ID <pubkey>` — thin wrapper over `ssh-keygen -s` with required `--key-id` (the audit primary key) and sane defaults.
+- `sshca cert sign --ca user|host --principal X --valid +8h --key-id ID <pubkey>` — wraps `ssh-keygen -s`. `--key-id` is required and is the issuance log's primary key.
 - Every successful sign appends a JSONL entry to `<ca-dir>/issuance-log.jsonl`. Schema documented in [CLAUDE.md](CLAUDE.md) "Contract surface."
 
 ### Added — Cert lifecycle
 
-- `sshca cert inspect <cert-file>` — human-readable cert view (wraps `ssh-keygen -L`).
-- `sshca cert renew --pubkey-file <path>` — re-signs with principals auto-inferred from the existing `<pubkey>-cert.pub`. Optional `--ship <user@host:/path>` to scp the new cert to a destination.
+- `sshca cert inspect <cert-file>` — shows a certificate's contents. Wraps `ssh-keygen -L`.
+- `sshca cert renew --pubkey-file <path>` — re-signs, taking principals from the existing `<pubkey>-cert.pub`. Optional `--ship <user@host:/path>` to scp the new cert to a destination.
 - `sshca cert revoke --ca user|host --key-id <ID>` — appends to local KRL at `<ca-dir>/revoked_keys.krl`. Optional `--ship <user@host:/path>` to scp the updated KRL (sshd re-reads on every connection — no reload needed).
 - `sshca cert krl` — local KRL metadata.
 
 ### Added — Audit log queries
 
-- `sshca cert list` — raw JSONL tail of the audit log (backwards-compatible default).
-- `sshca cert list --principal <X>` — tabular filter to entries with a specific principal.
-- `sshca cert list --expiring <DURATION>` — tabular view of certs whose expiry falls within `now + DURATION` (e.g. `24h`, `7d`, `4w`). Sorted by expires_at ascending. Catches the "cert nobody renewed" before it bites.
+- `sshca cert list` — reads the issuance log as JSONL.
+- `sshca cert list --principal <X>` — table of entries carrying that principal.
+- `sshca cert list --expiring <DURATION>` — tabular view of certs whose expiry falls within `now + DURATION` (e.g. `24h`, `7d`, `4w`). Sorted by expiry, ascending.
 - `sshca cert list --expired` — already-expired certs (composable with `--expiring`).
 
 ### Added — Cross-platform
