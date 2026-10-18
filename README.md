@@ -143,9 +143,14 @@ encrypted. Replacing a CA that still exists is `sshca rotate`
    from its public key and log entry.
 
 A log entry is skipped, and listed in the output with the reason, when its
-public key file is missing, when the certificate has expired, when its logged
+public key file is missing, when the certificate was signed by a CA other than
+the one being replaced, when the certificate file is missing and the entry has
+no `ca_fingerprint`, when the certificate has expired, when its logged
 validity cannot be parsed, or when the local KRL (`revoked_keys.krl`) revokes
-the certificate. When the certificate file is missing, the KRL is checked
+the certificate. The signing CA is read from the certificate file, or from the
+entry's `ca_fingerprint` when the file is missing. An entry a rotation skips
+stays the latest for its public key, so later rotations skip it as signed by
+another CA. When the certificate file is missing, the KRL is checked
 against a temporary certificate of the same public key, key ID and principals
 signed by the old CA. The command exits 1 if any
 re-signature or KRL check fails; the new CA and the transition file stay in
@@ -270,9 +275,9 @@ Post-1.0: [SemVer](https://semver.org/), covering two surfaces.
 
 - **CLI grammar** — subcommand names, flag names, exit codes.
 - **Issuance log schema** at `<ca-dir>/issuance-log.jsonl` — fields `ts`, `ca`,
-  `key_id`, `principals`, `valid`, `pubkey`, `cert`. Fields may be added in a
-  minor release; existing fields are not renamed or removed without a major
-  version bump.
+  `key_id`, `principals`, `valid`, `pubkey`, `cert`, `ca_fingerprint`. Fields
+  may be added in a minor release; existing fields are not renamed or removed
+  without a major version bump.
 
 ## License
 

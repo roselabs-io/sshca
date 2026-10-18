@@ -128,6 +128,10 @@ func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile str
 	if _, err := os.Stat(caPriv); err != nil {
 		return "", fmt.Errorf("CA key not found at %s — run `sshca ca init` first", caPriv)
 	}
+	caFP, err := keyFingerprint(caPriv + ".pub")
+	if err != nil {
+		return "", err
+	}
 	args := []string{"-s", caPriv, "-I", keyID, "-n", principal, "-V", valid}
 	if ca == "host" {
 		args = append(args, "-h")
@@ -141,9 +145,9 @@ func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile str
 		return certFile, fmt.Errorf("expected cert at %s but: %w", certFile, err)
 	}
 	logPath := filepath.Join(dir, issuanceLogName)
-	entry := fmt.Sprintf(`{"ts":%q,"ca":%q,"key_id":%q,"principals":%q,"valid":%q,"pubkey":%q,"cert":%q}`+"\n",
+	entry := fmt.Sprintf(`{"ts":%q,"ca":%q,"key_id":%q,"principals":%q,"valid":%q,"pubkey":%q,"cert":%q,"ca_fingerprint":%q}`+"\n",
 		time.Now().UTC().Format(time.RFC3339),
-		ca, keyID, principal, valid, pubkeyFile, certFile,
+		ca, keyID, principal, valid, pubkeyFile, certFile, caFP,
 	)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -208,6 +212,8 @@ type logEntry struct {
 	Valid      string `json:"valid"`
 	Pubkey     string `json:"pubkey"`
 	Cert       string `json:"cert"`
+	// CAFingerprint is empty in entries written before the field existed.
+	CAFingerprint string `json:"ca_fingerprint"`
 }
 
 // parseSSHKeygenDuration parses ssh-keygen -V style durations: "8h", "52w",
@@ -709,6 +715,10 @@ func rotateCA(dir, ca string) error {
 		latest[e.Pubkey] = e
 	}
 
+	prevFP, err := keyFingerprint(prev + ".pub")
+	if err != nil {
+		return err
+	}
 	krl := filepath.Join(dir, krlName)
 	failed := 0
 	for _, pub := range pubkeys {
@@ -716,6 +726,14 @@ func rotateCA(dir, ca string) error {
 		var valid, reason string
 		if _, err := os.Stat(e.Pubkey); err != nil {
 			reason = "public key file missing"
+		} else if issuer, err := entryIssuer(e); err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		} else if issuer == "" {
+			reason = "certificate file missing and signing CA not logged"
+		} else if issuer != prevFP {
+			reason = "signed by a CA other than " + prev
 		} else if revoked, err := entryRevoked(krl, prev, e); err != nil {
 			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
 			failed++
@@ -779,6 +797,45 @@ func resignValidity(e logEntry, now time.Time) (valid, skipReason string) {
 		lower = fmt.Sprintf("%+ds", int64(ts.Add(d).Sub(now)/time.Second))
 	}
 	return lower + ":" + upper, ""
+}
+
+// keyFingerprint returns the SHA256 fingerprint of the public key at pubFile.
+func keyFingerprint(pubFile string) (string, error) {
+	out, err := exec.Command("ssh-keygen", "-E", "sha256", "-lf", pubFile).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("ssh-keygen -lf %s: %v\n%s", pubFile, err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return "", fmt.Errorf("ssh-keygen -lf %s: unexpected output %q", pubFile, out)
+	}
+	return fields[1], nil
+}
+
+// entryIssuer returns the SHA256 fingerprint of the CA that signed the
+// certificate logged in e: read from the certificate file when it exists,
+// else the logged ca_fingerprint, which is empty in older entries.
+// A KRL entry by key ID applies to one CA, so revocation of e can only be
+// checked with a probe signed by this CA.
+func entryIssuer(e logEntry) (string, error) {
+	if _, err := os.Stat(e.Cert); err != nil {
+		return e.CAFingerprint, nil
+	}
+	out, err := exec.Command("ssh-keygen", "-E", "sha256", "-L", "-f", e.Cert).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("ssh-keygen -L %s: %v\n%s", e.Cert, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "Signing CA:") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "SHA256:") {
+				return f, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no signing CA in %s", e.Cert)
 }
 
 // entryRevoked reports whether the KRL at krl revokes the certificate logged

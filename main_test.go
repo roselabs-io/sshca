@@ -498,4 +498,20 @@ func TestRotateCA_Integration(t *testing.T) {
 	if err := rotateCA(dir, "user"); err == nil || !strings.Contains(err.Error(), "in progress") {
 		t.Errorf("second rotation: err = %v, want refusal while user_ca.prev exists", err)
 	}
+
+	// Runbook step 6, then a second rotation: erin's entry is still the latest
+	// for its key and was signed by the first CA, whose KRL entry the second
+	// CA's probe would not match.
+	for _, f := range []string{".prev", ".prev.pub", ".transition.pub"} {
+		os.Remove(filepath.Join(dir, userCAPrivName+f))
+	}
+	if err := rotateCA(dir, "user"); err != nil {
+		t.Fatalf("rotateCA after cleanup: %v", err)
+	}
+	if fp := fingerprint(t, aliceCert); fp != fingerprint(t, filepath.Join(dir, userCAPubName)) {
+		t.Errorf("alice cert signed by %s after the second rotation, want the newest CA", fp)
+	}
+	if _, err := os.Stat(erinCert); err == nil {
+		t.Errorf("erin cert re-signed by the second rotation although the KRL revokes its key ID under the first CA")
+	}
 }
