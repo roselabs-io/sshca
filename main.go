@@ -625,6 +625,178 @@ func certKrlCmd(_ context.Context, cmd *cli.Command) error {
 }
 
 // -----------------------------------------------------------------------------
+// Rotate — replace a CA and re-sign its certificates
+// -----------------------------------------------------------------------------
+
+// rotateCA keeps the current <ca>_ca keypair as <ca>_ca.prev, generates a new
+// one, writes <ca>_ca.transition.pub (new key, then old) and re-signs with the
+// new CA the latest certificate of each public key in the issuance log.
+// It returns an error when the CA cannot be replaced or a re-signature fails.
+func rotateCA(dir, ca string) error {
+	var priv string
+	switch ca {
+	case "user":
+		priv = filepath.Join(dir, userCAPrivName)
+	case "host":
+		priv = filepath.Join(dir, hostCAPrivName)
+	default:
+		return fmt.Errorf("ca must be 'user' or 'host', got %q", ca)
+	}
+	prev := priv + ".prev"
+	if _, err := os.Stat(prev); err == nil {
+		return fmt.Errorf("%s exists: a rotation of the %s CA is in progress (see README, CA rotation)", prev, ca)
+	}
+	if _, err := os.Stat(priv); err != nil {
+		return fmt.Errorf("CA key not found at %s — run `sshca ca init` first", priv)
+	}
+	if err := os.Rename(priv, prev); err != nil {
+		return err
+	}
+	if err := os.Rename(priv+".pub", prev+".pub"); err != nil {
+		os.Rename(prev, priv)
+		return err
+	}
+	now := time.Now().UTC()
+	comment := fmt.Sprintf("sshca %s CA %s", ca, now.Format("20060102"))
+	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-C", comment, "-q").CombinedOutput(); err != nil {
+		os.Remove(priv)
+		os.Remove(priv + ".pub")
+		os.Rename(prev, priv)
+		os.Rename(prev+".pub", priv+".pub")
+		return fmt.Errorf("ssh-keygen %s CA: %v\n%s", ca, err, out)
+	}
+	if err := os.Chmod(priv, 0o600); err != nil {
+		return err
+	}
+	newPub, err := os.ReadFile(priv + ".pub")
+	if err != nil {
+		return err
+	}
+	oldPub, err := os.ReadFile(prev + ".pub")
+	if err != nil {
+		return err
+	}
+	transition := priv + ".transition.pub"
+	if err := os.WriteFile(transition, append(newPub, oldPub...), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("✓ %s CA rotated\n", ca)
+	fmt.Printf("  new CA:     %s\n", priv)
+	fmt.Printf("  old CA:     %s\n", prev)
+	fmt.Printf("  transition: %s (trust this file on every machine until all certs are re-issued)\n\n", transition)
+
+	data, err := os.ReadFile(filepath.Join(dir, issuanceLogName))
+	if os.IsNotExist(err) {
+		fmt.Println("(no issuance log — no certs to re-sign)")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	latest := map[string]logEntry{}
+	var pubkeys []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e logEntry
+		if json.Unmarshal([]byte(line), &e) != nil || e.CA != ca {
+			continue
+		}
+		if _, seen := latest[e.Pubkey]; !seen {
+			pubkeys = append(pubkeys, e.Pubkey)
+		}
+		latest[e.Pubkey] = e
+	}
+
+	krl := filepath.Join(dir, krlName)
+	failed := 0
+	for _, pub := range pubkeys {
+		e := latest[pub]
+		var valid, reason string
+		if _, err := os.Stat(e.Pubkey); err != nil {
+			reason = "public key file missing"
+		} else if _, err := os.Stat(e.Cert); err != nil {
+			reason = "certificate file missing"
+		} else {
+			valid, reason = resignValidity(e, now)
+		}
+		if reason == "" {
+			revoked, err := certRevoked(krl, e.Cert)
+			if err != nil {
+				fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+				failed++
+				continue
+			}
+			if revoked {
+				reason = "revoked by " + krl
+			}
+		}
+		if reason != "" {
+			fmt.Printf("skipped    %s: %s\n", e.Pubkey, reason)
+			continue
+		}
+		certFile, err := signCert(dir, ca, e.Principals, valid, e.KeyID, e.Pubkey)
+		if err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		}
+		fmt.Printf("re-signed  %s (key-id %s, valid %s)\n", certFile, e.KeyID, valid)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d re-signature(s) failed; the new CA and %s are in place", failed, transition)
+	}
+	return nil
+}
+
+// resignValidity returns the ssh-keygen -V value that gives a re-signed cert
+// the expiry of the cert logged in e, or a reason not to re-sign it. A relative
+// upper bound is counted from the original issuance, so it becomes the seconds
+// left at now; an absolute or unbounded validity is reused as logged.
+func resignValidity(e logEntry, now time.Time) (valid, skipReason string) {
+	exp, has, err := parseExpiry(e.Valid, e.TS)
+	if err != nil {
+		return "", fmt.Sprintf("validity %q not understood: %v", e.Valid, err)
+	}
+	if !has {
+		return e.Valid, ""
+	}
+	left := exp.Sub(now).Truncate(time.Second)
+	if left <= 0 {
+		return "", "expired"
+	}
+	upper := e.Valid[strings.LastIndex(e.Valid, ":")+1:]
+	if strings.HasPrefix(upper, "+") {
+		return fmt.Sprintf("+%ds", int64(left/time.Second)), ""
+	}
+	return e.Valid, ""
+}
+
+// certRevoked reports whether the KRL at krl revokes certFile. A missing KRL
+// revokes nothing.
+func certRevoked(krl, certFile string) (bool, error) {
+	if _, err := os.Stat(krl); err != nil {
+		return false, nil
+	}
+	out, err := exec.Command("ssh-keygen", "-Q", "-f", krl, certFile).CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	// ssh-keygen -Q exits 1 when a key is revoked and 255 on other errors.
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, fmt.Errorf("ssh-keygen -Q: %v\n%s", err, out)
+}
+
+func rotateCmd(_ context.Context, cmd *cli.Command) error {
+	if err := rotateCA(caDirFromFlag(cmd), cmd.String("ca")); err != nil {
+		return cli.Exit(err.Error(), 1)
+	}
+	fmt.Println()
+	fmt.Println("Next: deliver the re-signed certs and follow the runbook in README.md, CA rotation.")
+	return nil
+}
+
+// -----------------------------------------------------------------------------
 // main — wire up commands
 // -----------------------------------------------------------------------------
 
@@ -722,6 +894,15 @@ func main() {
 						Action: certKrlCmd,
 					},
 				},
+			},
+			{
+				Name:  "rotate",
+				Usage: "replace the user or host CA, keep the old one as <ca>_ca.prev, write <ca>_ca.transition.pub and re-sign the CA's certs from the issuance log",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "ca", Usage: "the CA to replace: user|host", Required: true},
+					dirFlag,
+				},
+				Action: rotateCmd,
 			},
 		},
 	}

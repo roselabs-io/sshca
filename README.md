@@ -138,9 +138,10 @@ encrypted. Replacing a CA that still exists is `sshca rotate`
 
 A log entry is skipped, and listed in the output with the reason, when its
 public key file or its certificate file is missing, when the certificate has
-expired, or when the local KRL (`revoked_keys.krl`) revokes the certificate.
-The command exits 1 if any re-signature fails; the new CA and the transition
-file stay in place.
+expired, when its logged validity cannot be parsed, or when the local KRL
+(`revoked_keys.krl`) revokes the certificate. The command exits 1 if any
+re-signature or KRL check fails; the new CA and the transition file stay in
+place.
 
 | File in the CA directory | Content after `sshca rotate --ca user` |
 |---|---|

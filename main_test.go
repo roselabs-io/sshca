@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -273,5 +275,149 @@ func TestSignCert_MissingCA(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "CA key not found") {
 		t.Errorf("error doesn't mention missing CA key: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// rotate — replace a CA and re-sign its certificates
+// -----------------------------------------------------------------------------
+
+func TestResignValidity(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-05-29T17:00:00Z")
+	const ts = "2026-05-29T15:00:00Z"
+	cases := []struct {
+		valid, want string
+		skip        bool
+	}{
+		{"+8h", "+21600s", false},
+		{"always:+8h", "+21600s", false},
+		{"20260601:20260701", "20260601:20260701", false},
+		{"always", "always", false},
+		{"+1h", "", true},               // expired at 16:00
+		{"20260101:20260201", "", true}, // expired absolute
+		{"+8x", "", true},               // not understood
+	}
+	for _, c := range cases {
+		got, reason := resignValidity(logEntry{TS: ts, Valid: c.valid}, now)
+		if (reason != "") != c.skip || got != c.want {
+			t.Errorf("resignValidity(%q) = (%q, %q), want (%q, skip=%v)", c.valid, got, reason, c.want, c.skip)
+		}
+	}
+}
+
+// fingerprint returns the SHA256 fingerprint of a public key file, or of the
+// signing CA of a certificate file.
+func fingerprint(t *testing.T, file string) string {
+	t.Helper()
+	args, prefix := []string{"-lf", file}, ""
+	if strings.HasSuffix(file, "-cert.pub") {
+		args, prefix = []string{"-L", "-f", file}, "Signing CA:"
+	}
+	out, err := exec.Command("ssh-keygen", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ssh-keygen on %s: %v\n%s", file, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "SHA256:") {
+				return f
+			}
+		}
+	}
+	t.Fatalf("no fingerprint in ssh-keygen output for %s:\n%s", file, out)
+	return ""
+}
+
+func TestRotateCA_Integration(t *testing.T) {
+	skipIfNoSSHKeygen(t)
+	dir := t.TempDir()
+	for _, name := range []string{userCAPrivName, hostCAPrivName, "alice", "bob", "carol", "dave", "web"} {
+		if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", filepath.Join(dir, name), "-N", "", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("keygen %s: %v\n%s", name, err, out)
+		}
+	}
+	pub := func(name string) string { return filepath.Join(dir, name+".pub") }
+	sign := func(ca, name, valid string) string {
+		cert, err := signCert(dir, ca, name, valid, name+"-id", pub(name))
+		if err != nil {
+			t.Fatalf("signCert %s: %v", name, err)
+		}
+		return cert
+	}
+	sign("user", "alice", "+1h")
+	aliceCert := sign("user", "alice", "+8h") // latest entry for alice wins
+	sign("user", "bob", "+8h")
+	carolCert := sign("user", "carol", "+8h")
+	sign("user", "dave", "20200101:20200102")
+	webCert := sign("host", "web", "+52w")
+	oldUserFP := fingerprint(t, filepath.Join(dir, userCAPubName))
+	webBefore, _ := os.ReadFile(webCert)
+
+	revoke := exec.Command("ssh-keygen", "-k", "-f", filepath.Join(dir, krlName), "-s", filepath.Join(dir, userCAPubName), "-")
+	revoke.Stdin = strings.NewReader("id: bob-id\n")
+	if out, err := revoke.CombinedOutput(); err != nil {
+		t.Fatalf("krl: %v\n%s", err, out)
+	}
+	os.Remove(carolCert)
+
+	if err := rotateCA(dir, "user"); err != nil {
+		t.Fatalf("rotateCA: %v", err)
+	}
+
+	newUserFP := fingerprint(t, filepath.Join(dir, userCAPubName))
+	if newUserFP == oldUserFP {
+		t.Fatalf("user CA unchanged after rotation")
+	}
+	if fp := fingerprint(t, filepath.Join(dir, userCAPrivName+".prev.pub")); fp != oldUserFP {
+		t.Errorf("user_ca.prev.pub fingerprint = %s, want the old CA %s", fp, oldUserFP)
+	}
+	if st, err := os.Stat(filepath.Join(dir, userCAPrivName)); err != nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("new user_ca: stat %v, err %v; want mode 0600", st, err)
+	}
+	newPub, _ := os.ReadFile(filepath.Join(dir, userCAPubName))
+	oldPub, _ := os.ReadFile(filepath.Join(dir, userCAPrivName+".prev.pub"))
+	transition, _ := os.ReadFile(filepath.Join(dir, userCAPrivName+".transition.pub"))
+	if string(transition) != string(newPub)+string(oldPub) {
+		t.Errorf("transition file = %q, want new then old public key", transition)
+	}
+
+	if fp := fingerprint(t, aliceCert); fp != newUserFP {
+		t.Errorf("alice cert signed by %s, want the new CA %s", fp, newUserFP)
+	}
+	if got := inferPrincipalFromCert(aliceCert); got != "alice" {
+		t.Errorf("alice principals = %q, want alice", got)
+	}
+	if fp := fingerprint(t, filepath.Join(dir, "bob-cert.pub")); fp != oldUserFP {
+		t.Errorf("revoked bob cert re-signed by %s", fp)
+	}
+	if fp := fingerprint(t, filepath.Join(dir, "dave-cert.pub")); fp != oldUserFP {
+		t.Errorf("expired dave cert re-signed by %s", fp)
+	}
+	if _, err := os.Stat(carolCert); err == nil {
+		t.Errorf("carol cert re-signed although its cert file was missing")
+	}
+	if webAfter, _ := os.ReadFile(webCert); string(webAfter) != string(webBefore) {
+		t.Errorf("host cert changed by a user CA rotation")
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, issuanceLogName))
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 7 {
+		t.Fatalf("issuance log has %d lines, want 6 signatures + 1 re-signature:\n%s", len(lines), data)
+	}
+	var last logEntry
+	if err := json.Unmarshal([]byte(lines[6]), &last); err != nil {
+		t.Fatal(err)
+	}
+	secs, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(last.Valid, "+"), "s"))
+	if last.KeyID != "alice-id" || err != nil || secs <= 8*3600-60 || secs > 8*3600 {
+		t.Errorf("re-signature log entry = %+v, want key_id alice-id and about +28800s", last)
+	}
+
+	if err := rotateCA(dir, "user"); err == nil || !strings.Contains(err.Error(), "in progress") {
+		t.Errorf("second rotation: err = %v, want refusal while user_ca.prev exists", err)
 	}
 }
