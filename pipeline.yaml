@@ -1,0 +1,52 @@
+# The dispatcher's config for sshca. `governor/settings/settings.py` in the Governor package describes every key
+# and its default.
+
+name: "sshca"
+repo: "roselabs-io/sshca"
+checkout: .
+qa_owner: "Patrick Saint-Denis"
+runtime_paths: [pipeline.yaml, justfile, tools/]
+
+markers:
+  prefix: "sshca"
+
+ci:
+  workflow: "sshca-ci.yml"
+  run_title: "sshca CI PR #{number} {head}"
+  runner_labels: ["ubuntu-latest"]
+
+gate:
+  command: just gate
+
+# The merge gate (`governor/docs/service/merge-queue.md`, Merge policy): `full` merges every approved PR through
+# the merge queue, `tiered` leaves the merge of a complex or exceptional ticket's PR to a person, `gated` leaves
+# every merge to a person. Whether a merge deploys is decided by this repository's own CI/CD.
+autonomy: gated
+
+preflight:
+  command: [python3, tools/local_preflight.py]
+  steps: [just check, just gate]
+
+checks:
+  recipes:
+    not_applicable: {"up": "the repository has no local stack", "down": "the repository has no local stack", "logs": "the repository has no local stack"}
+
+# The three documents below name AGENTS.md; `docs.operating_model` must hold a "Finding triage" section.
+docs:
+  agents: AGENTS.md
+  contract: AGENTS.md
+  review_posture: AGENTS.md
+  operating_model: AGENTS.md
+
+tickets:
+  project: "Governor"
+  project_number: 2
+  fields:
+    horizon:
+      name: Horizon
+      options: [Now, Next, Later]
+      colors: [BLUE, YELLOW, GRAY]
+    work_type:
+      name: Work type
+      options: [Epic, Feature, Experiment, Bug, Research, Task]
+      colors: [PURPLE, BLUE, GREEN, RED, YELLOW, GRAY]
