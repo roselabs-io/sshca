@@ -137,7 +137,7 @@ func TestFormatTimeLeft(t *testing.T) {
 		{-14 * time.Hour, "-14h0m0s"},
 		{0, "0s"},
 		{1*time.Minute + 30*time.Second, "1m0s"}, // seconds truncated
-		{59 * time.Second, "0s"},                  // sub-minute truncated to 0
+		{59 * time.Second, "0s"},                 // sub-minute truncated to 0
 		{-3*time.Hour - 30*time.Minute, "-3h30m0s"},
 	}
 	for _, c := range cases {

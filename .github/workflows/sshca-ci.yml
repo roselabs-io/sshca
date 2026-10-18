@@ -1,0 +1,138 @@
+name: sshca CI
+run-name: "${{ inputs.pr_number && format('sshca CI PR #{0} {1}', inputs.pr_number, inputs.expected_head_sha) || github.event.pull_request.title || github.sha }}"
+
+# `validate` checks the PR, its `Sshca-Issue` marker and, on a dispatched run, its `Sshca-Agent` line
+# (a lane of `routing.lanes` of pipeline.yaml; a lane stored through the API in `lanes.json` is not on the
+# runner and fails the check) with `governor/pr_issue.py` of the Governor package; `gate` runs `gate.command` of pipeline.yaml. A dispatched run (`expected_head_sha` set, run on
+# `main`) merges `expected_head_sha` into `main` with `--no-ff` before testing; a conflict fails the
+# `Merge conflict check` step, which the dispatcher reads. The run name of a dispatched run is
+# `ci.run_title` of pipeline.yaml.
+#
+# Both jobs run on GitHub-hosted `ubuntu-latest`: the repository is public, and the organization's
+# self-hosted runner group does not serve public repositories. `gate` installs `just` and the Go
+# version of `go.mod` before `just gate`. A PR from a fork receives no `GOVERNOR_PM_TOKEN`, so its
+# `Check out the Governor package` step fails.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, 'queue/**']
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number of the dispatched exact-head gate
+        required: false
+        type: string
+      expected_head_sha:
+        description: Exact PR head commit to validate
+        required: false
+        type: string
+
+concurrency:
+  group: sshca-ci-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.expected_head_sha == '' && 1 || 0 }}
+
+      - name: "Merge conflict check: PR head into main"
+        if: inputs.expected_head_sha != ''
+        env:
+          HEAD_SHA: ${{ inputs.expected_head_sha }}
+        run: |
+          git fetch --no-tags origin "$HEAD_SHA"
+          git -c user.name=sshca-ci -c user.email=sshca-ci@users.noreply.github.com merge --no-ff --no-edit "$HEAD_SHA" || {
+            echo "::error title=Merge conflict::PR head $HEAD_SHA conflicts with main $GITHUB_SHA; merge main into the branch"
+            exit 1
+          }
+
+      - name: Validate PR metadata
+        if: github.event_name == 'pull_request' || inputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const number = Number(context.payload.pull_request?.number || "${{ inputs.pr_number }}");
+            const expected = "${{ inputs.expected_head_sha }}";
+            if (!Number.isSafeInteger(number) || number < 1 ||
+                (!context.payload.pull_request && !/^[0-9a-f]{40}$/.test(expected))) {
+              core.setFailed("A valid PR number and exact head SHA are required.");
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo, pull_number: number,
+            });
+            if (!context.payload.pull_request && (pr.state !== "open" || pr.draft ||
+                pr.head.repo?.full_name !== context.repo.owner + "/" + context.repo.repo ||
+                pr.head.sha !== expected)) {
+              core.setFailed("The dispatched head must be the current ready agent PR head.");
+              return;
+            }
+            const fs = require("fs");
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/sshca-pr.json`, JSON.stringify(pr));
+
+      - name: Check out the Governor package
+        if: github.event_name == 'pull_request' || inputs.pr_number != ''
+        uses: actions/checkout@v7
+        with:
+          repository: roselabs-io/governor
+          token: ${{ secrets.GOVERNOR_PM_TOKEN }}
+          path: .governor-package
+
+      - name: Install uv
+        if: github.event_name == 'pull_request' || inputs.pr_number != ''
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
+          cache-dependency-glob: .governor-package/uv.lock
+
+      - name: Check branch issue marker
+        if: github.event_name == 'pull_request' || inputs.pr_number != ''
+        env:
+          PIPELINE_CONFIG: ${{ github.workspace }}/pipeline.yaml
+        run: uv run --frozen --no-dev --project .governor-package python .governor-package/governor/pr_issue.py "$RUNNER_TEMP/sshca-pr.json" ${{ github.event_name != 'pull_request' && '--dispatched' || '' }}
+
+  gate:
+    needs: validate
+    name: Deterministic gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.expected_head_sha == '' && 1 || 0 }}
+
+      - name: "Merge conflict check: PR head into main"
+        if: inputs.expected_head_sha != ''
+        env:
+          HEAD_SHA: ${{ inputs.expected_head_sha }}
+        run: |
+          git fetch --no-tags origin "$HEAD_SHA"
+          git -c user.name=sshca-ci -c user.email=sshca-ci@users.noreply.github.com merge --no-ff --no-edit "$HEAD_SHA" || {
+            echo "::error title=Merge conflict::PR head $HEAD_SHA conflicts with main $GITHUB_SHA; merge main into the branch"
+            exit 1
+          }
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Gate
+        run: just gate

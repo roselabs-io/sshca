@@ -1,0 +1,78 @@
+name: sshca PM sync
+
+# Runs `governor/ticket_sync.py` of the Governor package with `tickets.*` of pipeline.yaml: every issue
+# with a `sshca-pm` block is added to the organization project `Governor` (number 2, `tickets.project` of pipeline.yaml), with its fields set from the
+# block. A PR's `Sshca-Issue: #N` line moves issue N to In progress (draft) or Review (ready), and a
+# merge into `main` closes it as Done.
+#
+# `GOVERNOR_PM_TOKEN` is an organization secret holding a token that can read and write the organization's projects and
+# the repository's issues, and read the Governor package repository; a repository secret of the same name overrides
+# it. `github.token` cannot write an organization project.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sshca-pm.yml'
+      - 'pipeline.yaml'
+  issues:
+    types: [opened, edited, closed, reopened, milestoned, demilestoned]
+  pull_request:
+    types: [opened, reopened, converted_to_draft, ready_for_review, closed]
+  workflow_dispatch:
+
+concurrency:
+  group: sshca-pm-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GOVERNOR_PM_TOKEN: ${{ secrets.GOVERNOR_PM_TOKEN }}
+      SSHCA_PM_ISSUE_NUMBER: ${{ github.event.issue.number }}
+      PIPELINE_CONFIG: ${{ github.workspace }}/pipeline.yaml
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out the Governor package
+        uses: actions/checkout@v7
+        with:
+          repository: roselabs-io/governor
+          token: ${{ secrets.GOVERNOR_PM_TOKEN }}
+          path: .governor-package
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
+          cache-dependency-glob: .governor-package/uv.lock
+
+      - name: Synchronize GitHub project management metadata
+        run: |
+          set -o pipefail
+          uv run --frozen --no-dev --project .governor-package python .governor-package/governor/ticket_sync.py 2>&1 | tee "$RUNNER_TEMP/sshca-pm.log"
+
+      - name: Report PM sync failure
+        if: failure() && (github.event.issue.number || github.event.pull_request.number)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "sshca PM sync failed."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo '~~~text'
+            tail -c 5000 "$RUNNER_TEMP/sshca-pm.log" 2>/dev/null || echo "No sync log was produced."
+            echo '~~~'
+          } > "$RUNNER_TEMP/sshca-pm-comment.md"
+          gh issue comment "$NUMBER" --body-file "$RUNNER_TEMP/sshca-pm-comment.md"
