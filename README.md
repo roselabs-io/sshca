@@ -41,6 +41,18 @@ brew install sshca
 for Unix, `.zip` for Windows, six platforms (linux/darwin/windows ×
 amd64/arm64), with SHA-256 checksums.
 
+### go install
+
+Requires Go 1.25.5 or later.
+
+```sh
+go install github.com/roselabs-io/sshca@latest
+```
+
+The binary is written to `$(go env GOPATH)/bin`, or `$GOBIN` when set. It
+reports version `0.1.0-dev`: the release tag is injected only by the release
+build.
+
 ### From source
 
 ```sh
