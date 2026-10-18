@@ -39,7 +39,8 @@ No key or token is tracked. CA private keys stay on the operator's machine; `.gi
 `up`, `down` and `logs` are not applicable (`checks.recipes.not_applicable` of `pipeline.yaml`):
 there is no local stack. `just` and Go are required.
 
-The gate does not scan for secrets and does not audit dependencies (sshca#2).
+There is no `just audit` recipe. The gate does not scan for secrets and does not audit dependencies
+(sshca#2).
 
 ## CI
 
