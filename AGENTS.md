@@ -19,8 +19,10 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release |
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
+| `.github/workflows/sshca-audit.yml` | `just audit` on a pull request or push to `main` that changes `go.mod` or `go.sum`, weekly on `main`, and on dispatch |
 | `pipeline.yaml` | the Governor dispatcher's config for this repository |
 | `tools/local_preflight.py` | the local check the dispatcher runs: `just check`, then `just gate` |
+| `tools/secret_scan.py`, `.secrets.baseline` | the offline secret scan of the tracked files and the findings it accepts |
 
 No key or token is tracked. CA private keys stay on the operator's machine; `.gitignore` excludes
 `ca/`, `*.pem`, `*.key` and `*-cert.pub.local`.
@@ -32,14 +34,30 @@ No key or token is tracked. CA private keys stay on the operator's machine; `.gi
 | `just check` | `go vet ./...`; fails when `gofmt -l .` lists a file |
 | `just test` | `go test ./...` |
 | `just build` | `go vet` and `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
-| `just gate` | `check`, `test`, `build`; the deterministic gate CI runs |
+| `just secrets` | `tools/secret_scan.py`: detect-secrets 1.5.0 over every file of `git ls-files`; fails on a finding `.secrets.baseline` does not hold |
+| `just gate` | `check`, `secrets`, `test`, `build`; the deterministic gate CI runs |
+| `just audit` | `govulncheck ./...` (v1.9.0, through `go run`); needs the network; not part of the gate |
 | `just fix` | `gofmt -w .` |
 | `just ff` | switches to `main` and fast-forwards it from `origin`; refuses local changes or a diverged `main` |
 
 `up`, `down` and `logs` are not applicable (`checks.recipes.not_applicable` of `pipeline.yaml`):
-there is no local stack. `just` and Go are required.
+there is no local stack. `just`, Go and uv are required.
 
-The gate does not scan for secrets and does not audit dependencies (sshca#2).
+`just secrets` runs detect-secrets through uv, outside `go.mod`; the first run downloads it and later
+runs read uv's cache. The scan reads `.secrets.baseline` and writes nothing. It covers tracked files
+only, not untracked files or Git history, and finds what detect-secrets' patterns and entropy rules
+find. To accept a finding that is not a secret, or to refresh the baseline's line numbers:
+
+```sh
+git ls-files -z | xargs -0 uv tool run --from detect-secrets==1.5.0 detect-secrets scan --no-verify --baseline .secrets.baseline
+```
+
+then review the changed entries in the diff.
+
+`just audit` reports a vulnerability only when the code calls the affected symbol; it exits non-zero
+then. A finding is triaged like a review finding: a fix, or a recorded disposition with its
+follow-up issue. govulncheck scans with the local Go toolchain, so standard-library findings depend
+on the Go version that runs it.
 
 ## CI
 

@@ -23,8 +23,18 @@ build:
         CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -o "$out/sshca-${target%/*}-${target#*/}" .
     done
 
+# The offline secret scan of the tracked files against `.secrets.baseline` (`tools/secret_scan.py`).
+# Needs uv; detect-secrets 1.5.0 is downloaded once and then read from uv's cache.
+secrets:
+    uv run --no-project --with detect-secrets==1.5.0 python tools/secret_scan.py
+
 # The deterministic gate CI runs.
-gate: check test build
+gate: check secrets test build
+
+# The Go module dependencies against the Go vulnerability database. Needs the network; not part of
+# the gate (`sshca-audit.yml`).
+audit:
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 # Apply the formatter.
 fix:
