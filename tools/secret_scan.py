@@ -1,7 +1,8 @@
 """The offline secret scan of the tracked files, run by `just secrets` inside `just gate`.
 
 ```sh
-uv run --no-project --with detect-secrets==1.5.0 python tools/secret_scan.py
+just secrets-env              # once: .venv with detect-secrets 1.5.0
+.venv/bin/python tools/secret_scan.py
 ```
 
 Run in a Git checkout, it scans every file of `git ls-files` with detect-secrets, using the plugins,
@@ -20,7 +21,7 @@ git ls-files -z | xargs -0 uv tool run --from detect-secrets==1.5.0 detect-secre
 
 then review the changed entries in the diff. Limits: the detectors are detect-secrets' patterns and
 entropy rules, so a secret of an unknown format with low entropy is not found; untracked files and
-Git history are not scanned. Installing detect-secrets needs the network once; uv caches it.
+Git history are not scanned. Preparing `.venv` needs the network; the scan does not.
 """
 
 from __future__ import annotations

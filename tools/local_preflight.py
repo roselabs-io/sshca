@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""The local check the dispatcher runs on a committed candidate: `just check`, then `just gate`.
+"""The local check the dispatcher runs on a committed candidate: `just secrets-env`, `just check`,
+then `just gate`.
 
 Writes the record the dispatcher reads, `<git dir>/sshca-preflight/result.json` (`status`,
 `reason`, `base`, `mode`, `checks`, `candidate`), and appends command output to `checks.log` beside
 it. The dispatcher accepts a `passed` record of mode `recipes` only when `just check` and
 `just gate` both exited 0, so a replacement check keeps those two names in `checks`. The script runs
-no other program: preparing the checkout (installing dependencies) belongs to the recipes. `--status`
-prints the saved record. Exit 0 when the status is `passed`, else 1.
+no other program: preparing the checkout belongs to the recipes, and `just secrets-env` prepares
+the secret scan's environment before the gate. `--status` prints the saved record. Exit 0 when the
+status is `passed`, else 1.
 """
 
 from __future__ import annotations
@@ -18,7 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-CHECKS = {"just check": ["just", "check"], "just gate": ["just", "gate"]}
+CHECKS = {
+    "just secrets-env": ["just", "secrets-env"],
+    "just check": ["just", "check"],
+    "just gate": ["just", "gate"],
+}
 
 
 def git(*args: str) -> str:
