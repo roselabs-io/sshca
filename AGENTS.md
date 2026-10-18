@@ -31,7 +31,7 @@ No key or token is tracked. CA private keys stay on the operator's machine; `.gi
 |---|---|
 | `just check` | `go vet ./...`; fails when `gofmt -l .` lists a file |
 | `just test` | `go test ./...` |
-| `just build` | `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
+| `just build` | `go vet` and `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
 | `just gate` | `check`, `test`, `build`; the deterministic gate CI runs |
 | `just fix` | `gofmt -w .` |
 | `just ff` | switches to `main` and fast-forwards it from `origin`; refuses local changes or a diverged `main` |
