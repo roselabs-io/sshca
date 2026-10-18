@@ -290,7 +290,10 @@ func TestResignValidity(t *testing.T) {
 		skip        bool
 	}{
 		{"+8h", "+21600s", false},
-		{"always:+8h", "+21600s", false},
+		{"always:+8h", "always:+21600s", false},
+		{"20260529180000Z:+8h", "20260529180000Z:+21600s", false}, // future start kept
+		{"-5m:+8h", "-7500s:+21600s", false},                      // start 14:55
+		{"+1h:+8h", "-3600s:+21600s", false},                      // start 16:00
 		{"20260601:20260701", "20260601:20260701", false},
 		{"always", "always", false},
 		{"+1h", "", true},               // expired at 16:00
@@ -331,10 +334,67 @@ func fingerprint(t *testing.T, file string) string {
 	return ""
 }
 
+// certValidity returns the start and expiry ssh-keygen -L prints for a
+// certificate, in local time.
+func certValidity(t *testing.T, cert string) (from, to time.Time) {
+	t.Helper()
+	out, err := exec.Command("ssh-keygen", "-L", "-f", cert).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ssh-keygen -L %s: %v\n%s", cert, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 5 && f[0] == "Valid:" && f[1] == "from" && f[3] == "to" {
+			from, err1 := time.ParseInLocation("2006-01-02T15:04:05", f[2], time.Local)
+			to, err2 := time.ParseInLocation("2006-01-02T15:04:05", f[4], time.Local)
+			if err1 == nil && err2 == nil {
+				return from, to
+			}
+		}
+	}
+	t.Fatalf("no bounded validity in ssh-keygen -L output for %s:\n%s", cert, out)
+	return
+}
+
+func TestRotateCA_Concurrent(t *testing.T) {
+	skipIfNoSSHKeygen(t)
+	dir := t.TempDir()
+	priv := filepath.Join(dir, userCAPrivName)
+	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("keygen: %v\n%s", err, out)
+	}
+	oldFP := fingerprint(t, priv+".pub")
+	const n = 8
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			errs <- rotateCA(dir, "user")
+		}()
+	}
+	close(start)
+	succeeded := 0
+	for i := 0; i < n; i++ {
+		if err := <-errs; err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Errorf("%d of %d overlapping rotations succeeded, want 1", succeeded, n)
+	}
+	if fp := fingerprint(t, priv+".prev.pub"); fp != oldFP {
+		t.Errorf("user_ca.prev.pub fingerprint = %s, want the original CA %s", fp, oldFP)
+	}
+	if fp := fingerprint(t, priv+".pub"); fp == oldFP {
+		t.Errorf("user_ca.pub is still the original CA")
+	}
+}
+
 func TestRotateCA_Integration(t *testing.T) {
 	skipIfNoSSHKeygen(t)
 	dir := t.TempDir()
-	for _, name := range []string{userCAPrivName, hostCAPrivName, "alice", "bob", "carol", "dave", "web"} {
+	for _, name := range []string{userCAPrivName, hostCAPrivName, "alice", "bob", "carol", "dave", "erin", "frank", "web"} {
 		if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", filepath.Join(dir, name), "-N", "", "-q").CombinedOutput(); err != nil {
 			t.Fatalf("keygen %s: %v\n%s", name, err, out)
 		}
@@ -352,16 +412,21 @@ func TestRotateCA_Integration(t *testing.T) {
 	sign("user", "bob", "+8h")
 	carolCert := sign("user", "carol", "+8h")
 	sign("user", "dave", "20200101:20200102")
+	erinCert := sign("user", "erin", "+8h")
+	frankStart := time.Now().Add(24 * time.Hour)
+	frankCert := sign("user", "frank", frankStart.Format("20060102150405")+":+48h")
+	frankFrom, frankTo := certValidity(t, frankCert)
 	webCert := sign("host", "web", "+52w")
 	oldUserFP := fingerprint(t, filepath.Join(dir, userCAPubName))
 	webBefore, _ := os.ReadFile(webCert)
 
 	revoke := exec.Command("ssh-keygen", "-k", "-f", filepath.Join(dir, krlName), "-s", filepath.Join(dir, userCAPubName), "-")
-	revoke.Stdin = strings.NewReader("id: bob-id\n")
+	revoke.Stdin = strings.NewReader("id: bob-id\nid: erin-id\n")
 	if out, err := revoke.CombinedOutput(); err != nil {
 		t.Fatalf("krl: %v\n%s", err, out)
 	}
 	os.Remove(carolCert)
+	os.Remove(erinCert)
 
 	if err := rotateCA(dir, "user"); err != nil {
 		t.Fatalf("rotateCA: %v", err)
@@ -396,8 +461,21 @@ func TestRotateCA_Integration(t *testing.T) {
 	if fp := fingerprint(t, filepath.Join(dir, "dave-cert.pub")); fp != oldUserFP {
 		t.Errorf("expired dave cert re-signed by %s", fp)
 	}
-	if _, err := os.Stat(carolCert); err == nil {
-		t.Errorf("carol cert re-signed although its cert file was missing")
+	if fp := fingerprint(t, carolCert); fp != newUserFP {
+		t.Errorf("carol cert, missing before rotation, signed by %s, want the new CA %s", fp, newUserFP)
+	}
+	if _, err := os.Stat(erinCert); err == nil {
+		t.Errorf("erin cert re-signed although the KRL revokes its key ID")
+	}
+	if fp := fingerprint(t, frankCert); fp != newUserFP {
+		t.Errorf("frank cert signed by %s, want the new CA %s", fp, newUserFP)
+	}
+	from, to := certValidity(t, frankCert)
+	if !from.Equal(frankFrom) || !from.After(time.Now().Add(20*time.Hour)) {
+		t.Errorf("re-signed frank cert valid from %s, want the original future start %s", from, frankFrom)
+	}
+	if d := to.Sub(frankTo); d < -2*time.Second || d > 2*time.Second {
+		t.Errorf("re-signed frank cert valid to %s, want %s", to, frankTo)
 	}
 	if webAfter, _ := os.ReadFile(webCert); string(webAfter) != string(webBefore) {
 		t.Errorf("host cert changed by a user CA rotation")
@@ -405,11 +483,11 @@ func TestRotateCA_Integration(t *testing.T) {
 
 	data, _ := os.ReadFile(filepath.Join(dir, issuanceLogName))
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 7 {
-		t.Fatalf("issuance log has %d lines, want 6 signatures + 1 re-signature:\n%s", len(lines), data)
+	if len(lines) != 11 {
+		t.Fatalf("issuance log has %d lines, want 8 signatures + 3 re-signatures:\n%s", len(lines), data)
 	}
 	var last logEntry
-	if err := json.Unmarshal([]byte(lines[6]), &last); err != nil {
+	if err := json.Unmarshal([]byte(lines[8]), &last); err != nil {
 		t.Fatal(err)
 	}
 	secs, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(last.Valid, "+"), "s"))

@@ -122,9 +122,12 @@ encrypted. Replacing a CA that still exists is `sshca rotate`
 
 `sshca rotate --ca user|host` replaces one CA. It does the following, in order:
 
-1. Refuses to run when `<ca>_ca.prev` exists (a rotation of that CA is in
-   progress) or when `<ca>_ca` is missing.
-2. Renames `<ca>_ca` and `<ca>_ca.pub` to `<ca>_ca.prev` and `<ca>_ca.prev.pub`.
+1. Refuses to run when `<ca>_ca` is missing.
+2. Moves `<ca>_ca` and `<ca>_ca.pub` to `<ca>_ca.prev` and `<ca>_ca.prev.pub`,
+   by hard-linking each to its new name and then removing the old name. The
+   link fails when `<ca>_ca.prev` exists, so the command refuses to run while a
+   rotation of that CA is in progress, and of two overlapping runs only one
+   proceeds; an existing `<ca>_ca.prev` is never replaced.
 3. Generates a new ed25519 `<ca>_ca` (mode 0600) and `<ca>_ca.pub`. If
    generation fails, the renamed files are moved back.
 4. Writes `<ca>_ca.transition.pub`: the new public key, then the old one, one
@@ -132,14 +135,19 @@ encrypted. Replacing a CA that still exists is `sshca rotate`
 5. Re-signs, with the new CA, each certificate in the issuance log that was
    signed by that CA. For each public key path, only the latest log entry is
    used. The re-signed certificate keeps the key ID and principals, overwrites
-   `<name>-cert.pub`, and gets a new issuance log entry. A relative validity
-   (`+8h`, or a range ending in `+…`) becomes `+<seconds>s`, the time left on the
-   old certificate; any other validity is passed to `ssh-keygen -V` unchanged.
+   `<name>-cert.pub`, and gets a new issuance log entry. It keeps the start and
+   expiry of the old certificate: a relative bound (`+8h`, or either side of a
+   range such as `-5m:+8h`) becomes `+<seconds>s` or `-<seconds>s` from the
+   time of re-signing; an absolute bound or `always` is passed to
+   `ssh-keygen -V` unchanged. A certificate whose file is missing is re-signed
+   from its public key and log entry.
 
 A log entry is skipped, and listed in the output with the reason, when its
-public key file or its certificate file is missing, when the certificate has
-expired, when its logged validity cannot be parsed, or when the local KRL
-(`revoked_keys.krl`) revokes the certificate. The command exits 1 if any
+public key file is missing, when the certificate has expired, when its logged
+validity cannot be parsed, or when the local KRL (`revoked_keys.krl`) revokes
+the certificate. When the certificate file is missing, the KRL is checked
+against a temporary certificate of the same public key, key ID and principals
+signed by the old CA. The command exits 1 if any
 re-signature or KRL check fails; the new CA and the transition file stay in
 place.
 

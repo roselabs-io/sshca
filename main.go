@@ -242,7 +242,7 @@ func parseExpiry(validStr, tsStr string) (time.Time, bool, error) {
 	if validStr == "always" {
 		return time.Time{}, false, nil
 	}
-	if strings.HasPrefix(validStr, "+") {
+	if strings.HasPrefix(validStr, "+") && !strings.Contains(validStr, ":") {
 		d, err := parseSSHKeygenDuration(strings.TrimPrefix(validStr, "+"))
 		if err != nil {
 			return time.Time{}, false, err
@@ -643,21 +643,24 @@ func rotateCA(dir, ca string) error {
 		return fmt.Errorf("ca must be 'user' or 'host', got %q", ca)
 	}
 	prev := priv + ".prev"
-	if _, err := os.Stat(prev); err == nil {
-		return fmt.Errorf("%s exists: a rotation of the %s CA is in progress (see README, CA rotation)", prev, ca)
-	}
 	if _, err := os.Stat(priv); err != nil {
 		return fmt.Errorf("CA key not found at %s — run `sshca ca init` first", priv)
 	}
-	if err := os.Rename(priv, prev); err != nil {
+	// os.Link fails when the target exists, so of two concurrent rotations
+	// only one can save the current keypair, and a saved one is never replaced.
+	if err := os.Link(priv, prev); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("%s exists: a rotation of the %s CA is in progress (see README, CA rotation)", prev, ca)
+		}
 		return err
 	}
-	if err := os.Rename(priv+".pub", prev+".pub"); err != nil {
-		os.Rename(prev, priv)
+	if err := os.Link(priv+".pub", prev+".pub"); err != nil {
+		os.Remove(prev)
 		return err
 	}
-	now := time.Now().UTC()
-	comment := fmt.Sprintf("sshca %s CA %s", ca, now.Format("20060102"))
+	os.Remove(priv)
+	os.Remove(priv + ".pub")
+	comment := fmt.Sprintf("sshca %s CA %s", ca, time.Now().UTC().Format("20060102"))
 	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-C", comment, "-q").CombinedOutput(); err != nil {
 		os.Remove(priv)
 		os.Remove(priv + ".pub")
@@ -713,21 +716,15 @@ func rotateCA(dir, ca string) error {
 		var valid, reason string
 		if _, err := os.Stat(e.Pubkey); err != nil {
 			reason = "public key file missing"
-		} else if _, err := os.Stat(e.Cert); err != nil {
-			reason = "certificate file missing"
+		} else if revoked, err := entryRevoked(krl, prev, e); err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		} else if revoked {
+			reason = "revoked by " + krl
 		} else {
-			valid, reason = resignValidity(e, now)
-		}
-		if reason == "" {
-			revoked, err := certRevoked(krl, e.Cert)
-			if err != nil {
-				fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
-				failed++
-				continue
-			}
-			if revoked {
-				reason = "revoked by " + krl
-			}
+			// Relative bounds are counted from here, so this runs just before signing.
+			valid, reason = resignValidity(e, time.Now().UTC())
 		}
 		if reason != "" {
 			fmt.Printf("skipped    %s: %s\n", e.Pubkey, reason)
@@ -748,26 +745,73 @@ func rotateCA(dir, ca string) error {
 }
 
 // resignValidity returns the ssh-keygen -V value that gives a re-signed cert
-// the expiry of the cert logged in e, or a reason not to re-sign it. A relative
-// upper bound is counted from the original issuance, so it becomes the seconds
-// left at now; an absolute or unbounded validity is reused as logged.
+// the start and expiry of the cert logged in e, or a reason not to re-sign it.
+// ssh-keygen counts a relative bound from the time of signing, so a relative
+// bound logged at the original issuance becomes signed seconds from now; an
+// absolute or unbounded bound is reused as logged.
 func resignValidity(e logEntry, now time.Time) (valid, skipReason string) {
 	exp, has, err := parseExpiry(e.Valid, e.TS)
 	if err != nil {
 		return "", fmt.Sprintf("validity %q not understood: %v", e.Valid, err)
 	}
-	if !has {
-		return e.Valid, ""
-	}
-	left := exp.Sub(now).Truncate(time.Second)
-	if left <= 0 {
+	if has && exp.Sub(now) < time.Second {
 		return "", "expired"
 	}
-	upper := e.Valid[strings.LastIndex(e.Valid, ":")+1:]
-	if strings.HasPrefix(upper, "+") {
-		return fmt.Sprintf("+%ds", int64(left/time.Second)), ""
+	lower, upper, isRange := strings.Cut(e.Valid, ":")
+	if !isRange {
+		lower, upper = "", e.Valid
 	}
-	return e.Valid, ""
+	if has && strings.HasPrefix(upper, "+") {
+		upper = fmt.Sprintf("+%ds", int64(exp.Sub(now)/time.Second))
+	}
+	if !isRange {
+		return upper, ""
+	}
+	if strings.HasPrefix(lower, "+") || strings.HasPrefix(lower, "-") {
+		d, err := parseSSHKeygenDuration(lower[1:])
+		if err != nil {
+			return "", fmt.Sprintf("validity %q not understood: %v", e.Valid, err)
+		}
+		ts, _ := time.Parse(time.RFC3339, e.TS)
+		if lower[0] == '-' {
+			d = -d
+		}
+		lower = fmt.Sprintf("%+ds", int64(ts.Add(d).Sub(now)/time.Second))
+	}
+	return lower + ":" + upper, ""
+}
+
+// entryRevoked reports whether the KRL at krl revokes the certificate logged
+// in e. When that certificate file is missing, it checks a certificate of the
+// same public key, key ID and principals signed by the old CA at prevPriv.
+func entryRevoked(krl, prevPriv string, e logEntry) (bool, error) {
+	if _, err := os.Stat(krl); err != nil {
+		return false, nil
+	}
+	if _, err := os.Stat(e.Cert); err == nil {
+		return certRevoked(krl, e.Cert)
+	}
+	tmp, err := os.MkdirTemp("", "sshca-rotate-")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(tmp)
+	pubBytes, err := os.ReadFile(e.Pubkey)
+	if err != nil {
+		return false, err
+	}
+	probe := filepath.Join(tmp, "probe.pub")
+	if err := os.WriteFile(probe, pubBytes, 0o600); err != nil {
+		return false, err
+	}
+	args := []string{"-s", prevPriv, "-I", e.KeyID, "-n", e.Principals, "-V", "+1m"}
+	if e.CA == "host" {
+		args = append(args, "-h")
+	}
+	if out, err := exec.Command("ssh-keygen", append(args, probe)...).CombinedOutput(); err != nil {
+		return false, fmt.Errorf("ssh-keygen probe cert: %v\n%s", err, out)
+	}
+	return certRevoked(krl, filepath.Join(tmp, "probe-cert.pub"))
 }
 
 // certRevoked reports whether the KRL at krl revokes certFile. A missing KRL
