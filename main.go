@@ -629,7 +629,7 @@ func certKrlCmd(_ context.Context, cmd *cli.Command) error {
 // -----------------------------------------------------------------------------
 
 func main() {
-	dirFlag := &cli.StringFlag{Name: "dir", Usage: "CA directory (default: ./ca, override with $SSHCA_CA_DIR)"}
+	dirFlag := &cli.StringFlag{Name: "dir", Usage: "use a CA directory other than ./ca; takes precedence over $SSHCA_CA_DIR"}
 
 	app := &cli.Command{
 		Name:    "sshca",
@@ -663,10 +663,10 @@ func main() {
 						Usage:     "sign a pubkey into a cert using the local CA",
 						ArgsUsage: "<pubkey-file>",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "ca", Usage: "which CA to sign with: user|host", Required: true},
-							&cli.StringFlag{Name: "principal", Usage: "comma-separated principals", Required: true},
-							&cli.StringFlag{Name: "valid", Usage: "validity window (e.g. '+8h', '+52w', '20260601:20260701'); default '+8h'"},
-							&cli.StringFlag{Name: "key-id", Usage: "audit string baked into the cert (REQUIRED — your future-self audit trail)", Required: true},
+							&cli.StringFlag{Name: "ca", Usage: "user|host: user signs a client key for login, host signs a server host key", Required: true},
+							&cli.StringFlag{Name: "principal", Usage: "usernames (user CA) or hostnames (host CA) the cert is valid for, comma-separated", Required: true},
+							&cli.StringFlag{Name: "valid", Usage: "set a validity other than '+8h', as ssh-keygen -V accepts it (e.g. '+52w', '20260601:20260701')"},
+							&cli.StringFlag{Name: "key-id", Usage: "identifier written into the cert, the issuance log and sshd's auth log; used later to find or revoke the cert", Required: true},
 							dirFlag,
 						},
 						Action: certSignCmd,
@@ -675,9 +675,9 @@ func main() {
 						Name:  "list",
 						Usage: "tail the issuance log (raw JSONL by default; --principal / --expiring / --expired switch to a table)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "principal", Usage: "filter to entries with this principal"},
-							&cli.StringFlag{Name: "expiring", Usage: "show certs expiring within DURATION (e.g. 24h, 7d, 4w)"},
-							&cli.BoolFlag{Name: "expired", Usage: "include already-expired certs in the expiry view"},
+							&cli.StringFlag{Name: "principal", Usage: "show only certs issued to this principal, as a table"},
+							&cli.StringFlag{Name: "expiring", Usage: "show certs that expire within DURATION (e.g. 24h, 7d, 4w), to find certs due for renewal"},
+							&cli.BoolFlag{Name: "expired", Usage: "show certs that have already expired; combines with --expiring"},
 							dirFlag,
 						},
 						Action: certListCmd,
@@ -692,12 +692,12 @@ func main() {
 						Name:  "renew",
 						Usage: "re-sign a pubkey with a fresh cert (principal inferred from existing cert)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "pubkey-file", Usage: "path to the pubkey to re-sign", Required: true},
-							&cli.StringFlag{Name: "ca", Usage: "user|host (default: user)"},
-							&cli.StringFlag{Name: "principal", Usage: "comma-separated principals (default: inferred from existing <pubkey>-cert.pub)"},
-							&cli.StringFlag{Name: "valid", Usage: "validity window (default '+8h')"},
-							&cli.StringFlag{Name: "name", Usage: "key-id prefix (default: basename of pubkey-file)"},
-							&cli.StringFlag{Name: "ship", Usage: "scp destination for the resulting cert (e.g. 'user@host:/path')"},
+							&cli.StringFlag{Name: "pubkey-file", Usage: "public key to re-sign; its existing <name>-cert.pub is overwritten", Required: true},
+							&cli.StringFlag{Name: "ca", Usage: "set to host when renewing a host cert; default user"},
+							&cli.StringFlag{Name: "principal", Usage: "set principals when changing them or when no <name>-cert.pub exists to read them from, comma-separated"},
+							&cli.StringFlag{Name: "valid", Usage: "set a validity other than '+8h', as ssh-keygen -V accepts it (e.g. '+52w')"},
+							&cli.StringFlag{Name: "name", Usage: "key-id prefix, followed by a UTC timestamp; default the pubkey file name without .pub"},
+							&cli.StringFlag{Name: "ship", Usage: "copy the new cert with scp to this destination (e.g. 'user@host:/path'); omit to leave it local"},
 							dirFlag,
 						},
 						Action: certRenewCmd,
@@ -706,11 +706,11 @@ func main() {
 						Name:  "revoke",
 						Usage: "add a revocation entry to the KRL (by --key-id, --serial, or --pubkey-file)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "ca", Usage: "which CA the cert was signed by: user|host", Required: true},
-							&cli.StringFlag{Name: "key-id", Usage: "revoke by cert's audit key-id (the most common path)"},
-							&cli.IntFlag{Name: "serial", Usage: "revoke by cert serial number"},
-							&cli.StringFlag{Name: "pubkey-file", Usage: "revoke a raw pubkey by file path (rare for cert systems)"},
-							&cli.StringFlag{Name: "ship", Usage: "scp destination for the updated KRL (e.g. 'user@host:/etc/ssh/revoked_keys.krl')"},
+							&cli.StringFlag{Name: "ca", Usage: "the CA that signed the cert being revoked: user|host", Required: true},
+							&cli.StringFlag{Name: "key-id", Usage: "revoke every cert carrying this key-id, as recorded in the issuance log"},
+							&cli.IntFlag{Name: "serial", Usage: "revoke by serial number, shown by cert inspect; certs from cert sign have serial 0, which this flag cannot revoke"},
+							&cli.StringFlag{Name: "pubkey-file", Usage: "revoke a plain public key by file path; when set, --key-id and --serial are ignored"},
+							&cli.StringFlag{Name: "ship", Usage: "copy the updated KRL with scp to this destination (e.g. 'user@host:/etc/ssh/revoked_keys.krl'); omit to leave it local"},
 							dirFlag,
 						},
 						Action: certRevokeCmd,
