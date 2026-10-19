@@ -6,7 +6,7 @@
 # auto-generated release notes.
 #
 # For a tag that is not a prerelease, the homebrew job then sends a
-# repository_dispatch event (type `release`, payload `tool`, `tag`)
+# repository_dispatch event (type `formula-update`, payload `tool`, `tag`)
 # to roselabs-io/homebrew-tools, whose workflow updates
 # Formula/sshca.rb. GITHUB_TOKEN cannot reach another repository, so
 # the dispatch uses the secret HOMEBREW_TAP_TOKEN, a token that can
@@ -120,6 +120,6 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           gh api repos/roselabs-io/homebrew-tools/dispatches \
-            -f event_type=release \
+            -f event_type=formula-update \
             -f 'client_payload[tool]=sshca' \
             -f "client_payload[tag]=${GITHUB_REF_NAME}"
