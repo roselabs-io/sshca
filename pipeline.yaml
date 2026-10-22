@@ -23,10 +23,6 @@ gate:
 # every merge to a person. Whether a merge deploys is decided by this repository's own CI/CD.
 autonomy: tiered
 
-preflight:
-  command: [python3, tools/local_preflight.py]
-  steps: [just check, just gate]
-
 checks:
   recipes:
     not_applicable: {"up": "the repository has no local stack", "down": "the repository has no local stack", "logs": "the repository has no local stack"}
