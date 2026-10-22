@@ -20,7 +20,7 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
 | `pipeline.yaml` | the Governor dispatcher's config for this repository |
-| `tools/local_preflight.py` | the local check the dispatcher runs: `just check`, then `just gate` |
+| Governor's package preflight (`tools/local_preflight.py` of the Governor package, run by the dispatcher; this repository keeps no copy) | the local check the dispatcher runs: `just check`, then `just gate` |
 
 No key or token is tracked. CA private keys stay on the operator's machine; `.gitignore` excludes
 `ca/`, `*.pem`, `*.key` and `*-cert.pub.local`.
