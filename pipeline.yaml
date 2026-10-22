@@ -46,3 +46,7 @@ tickets:
       name: Work type
       options: [Epic, Feature, Experiment, Bug, Research, Task]
       colors: [PURPLE, BLUE, GREEN, RED, YELLOW, GRAY]
+
+# Governor's package preflight runs every project (governor#967); an empty table takes its defaults: the cheap
+# check (`just check`) and the tests of the changed files, with CI as the verdict.
+preflight: {}
