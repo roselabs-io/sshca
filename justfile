@@ -7,7 +7,7 @@ check:
 
 # The test suite.
 test:
-    go test ./...
+    go test -p "${GOVERNOR_JOBS:-1}" ./...
 
 # `go vet` and `go build` with CGO_ENABLED=0 for the six release targets of `release.yml` (the build
 # matrix of `ci.yml`). The binaries are written to a temporary directory and removed.
