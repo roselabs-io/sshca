@@ -21,11 +21,7 @@ gate:
 # The merge gate (`governor/docs/service/merge-queue.md`, Merge policy): `full` merges every approved PR through
 # the merge queue, `tiered` leaves the merge of a complex or exceptional ticket's PR to a person, `gated` leaves
 # every merge to a person. Whether a merge deploys is decided by this repository's own CI/CD.
-autonomy: tiered
-
-preflight:
-  command: [python3, tools/local_preflight.py]
-  steps: [just check, just gate]
+autonomy: full
 
 checks:
   recipes:
@@ -50,3 +46,7 @@ tickets:
       name: Work type
       options: [Epic, Feature, Experiment, Bug, Research, Task]
       colors: [PURPLE, BLUE, GREEN, RED, YELLOW, GRAY]
+
+# Governor's package preflight runs every project (governor#967); an empty table takes its defaults: the cheap
+# check (`just check`) and the tests of the changed files, with CI as the verdict.
+preflight: {}

@@ -128,6 +128,10 @@ func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile str
 	if _, err := os.Stat(caPriv); err != nil {
 		return "", fmt.Errorf("CA key not found at %s — run `sshca ca init` first", caPriv)
 	}
+	caFP, err := keyFingerprint(caPriv + ".pub")
+	if err != nil {
+		return "", err
+	}
 	args := []string{"-s", caPriv, "-I", keyID, "-n", principal, "-V", valid}
 	if ca == "host" {
 		args = append(args, "-h")
@@ -141,9 +145,9 @@ func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile str
 		return certFile, fmt.Errorf("expected cert at %s but: %w", certFile, err)
 	}
 	logPath := filepath.Join(dir, issuanceLogName)
-	entry := fmt.Sprintf(`{"ts":%q,"ca":%q,"key_id":%q,"principals":%q,"valid":%q,"pubkey":%q,"cert":%q}`+"\n",
+	entry := fmt.Sprintf(`{"ts":%q,"ca":%q,"key_id":%q,"principals":%q,"valid":%q,"pubkey":%q,"cert":%q,"ca_fingerprint":%q}`+"\n",
 		time.Now().UTC().Format(time.RFC3339),
-		ca, keyID, principal, valid, pubkeyFile, certFile,
+		ca, keyID, principal, valid, pubkeyFile, certFile, caFP,
 	)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -208,6 +212,8 @@ type logEntry struct {
 	Valid      string `json:"valid"`
 	Pubkey     string `json:"pubkey"`
 	Cert       string `json:"cert"`
+	// CAFingerprint is empty in entries written before the field existed.
+	CAFingerprint string `json:"ca_fingerprint"`
 }
 
 // parseSSHKeygenDuration parses ssh-keygen -V style durations: "8h", "52w",
@@ -242,7 +248,7 @@ func parseExpiry(validStr, tsStr string) (time.Time, bool, error) {
 	if validStr == "always" {
 		return time.Time{}, false, nil
 	}
-	if strings.HasPrefix(validStr, "+") {
+	if strings.HasPrefix(validStr, "+") && !strings.Contains(validStr, ":") {
 		d, err := parseSSHKeygenDuration(strings.TrimPrefix(validStr, "+"))
 		if err != nil {
 			return time.Time{}, false, err
@@ -625,11 +631,278 @@ func certKrlCmd(_ context.Context, cmd *cli.Command) error {
 }
 
 // -----------------------------------------------------------------------------
+// Rotate — replace a CA and re-sign its certificates
+// -----------------------------------------------------------------------------
+
+// rotateCA keeps the current <ca>_ca keypair as <ca>_ca.prev, generates a new
+// one, writes <ca>_ca.transition.pub (new key, then old) and re-signs with the
+// new CA the latest certificate of each public key in the issuance log.
+// It returns an error when the CA cannot be replaced or a re-signature fails.
+func rotateCA(dir, ca string) error {
+	var priv string
+	switch ca {
+	case "user":
+		priv = filepath.Join(dir, userCAPrivName)
+	case "host":
+		priv = filepath.Join(dir, hostCAPrivName)
+	default:
+		return fmt.Errorf("ca must be 'user' or 'host', got %q", ca)
+	}
+	prev := priv + ".prev"
+	if _, err := os.Stat(priv); err != nil {
+		return fmt.Errorf("CA key not found at %s — run `sshca ca init` first", priv)
+	}
+	// os.Link fails when the target exists, so of two concurrent rotations
+	// only one can save the current keypair, and a saved one is never replaced.
+	if err := os.Link(priv, prev); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("%s exists: a rotation of the %s CA is in progress (see README, CA rotation)", prev, ca)
+		}
+		return err
+	}
+	if err := os.Link(priv+".pub", prev+".pub"); err != nil {
+		os.Remove(prev)
+		return err
+	}
+	os.Remove(priv)
+	os.Remove(priv + ".pub")
+	comment := fmt.Sprintf("sshca %s CA %s", ca, time.Now().UTC().Format("20060102"))
+	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-f", priv, "-N", "", "-C", comment, "-q").CombinedOutput(); err != nil {
+		os.Remove(priv)
+		os.Remove(priv + ".pub")
+		os.Rename(prev, priv)
+		os.Rename(prev+".pub", priv+".pub")
+		return fmt.Errorf("ssh-keygen %s CA: %v\n%s", ca, err, out)
+	}
+	if err := os.Chmod(priv, 0o600); err != nil {
+		return err
+	}
+	newPub, err := os.ReadFile(priv + ".pub")
+	if err != nil {
+		return err
+	}
+	oldPub, err := os.ReadFile(prev + ".pub")
+	if err != nil {
+		return err
+	}
+	transition := priv + ".transition.pub"
+	if err := os.WriteFile(transition, append(newPub, oldPub...), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("✓ %s CA rotated\n", ca)
+	fmt.Printf("  new CA:     %s\n", priv)
+	fmt.Printf("  old CA:     %s\n", prev)
+	fmt.Printf("  transition: %s (trust this file on every machine until all certs are re-issued)\n\n", transition)
+
+	data, err := os.ReadFile(filepath.Join(dir, issuanceLogName))
+	if os.IsNotExist(err) {
+		fmt.Println("(no issuance log — no certs to re-sign)")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	latest := map[string]logEntry{}
+	var pubkeys []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e logEntry
+		if json.Unmarshal([]byte(line), &e) != nil || e.CA != ca {
+			continue
+		}
+		if _, seen := latest[e.Pubkey]; !seen {
+			pubkeys = append(pubkeys, e.Pubkey)
+		}
+		latest[e.Pubkey] = e
+	}
+
+	prevFP, err := keyFingerprint(prev + ".pub")
+	if err != nil {
+		return err
+	}
+	krl := filepath.Join(dir, krlName)
+	failed := 0
+	for _, pub := range pubkeys {
+		e := latest[pub]
+		var valid, reason string
+		if _, err := os.Stat(e.Pubkey); err != nil {
+			reason = "public key file missing"
+		} else if issuer, err := entryIssuer(e); err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		} else if issuer == "" {
+			reason = "certificate file missing and signing CA not logged"
+		} else if issuer != prevFP {
+			reason = "signed by a CA other than " + prev
+		} else if revoked, err := entryRevoked(krl, prev, e); err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		} else if revoked {
+			reason = "revoked by " + krl
+		} else {
+			// Relative bounds are counted from here, so this runs just before signing.
+			valid, reason = resignValidity(e, time.Now().UTC())
+		}
+		if reason != "" {
+			fmt.Printf("skipped    %s: %s\n", e.Pubkey, reason)
+			continue
+		}
+		certFile, err := signCert(dir, ca, e.Principals, valid, e.KeyID, e.Pubkey)
+		if err != nil {
+			fmt.Printf("failed     %s: %v\n", e.Pubkey, err)
+			failed++
+			continue
+		}
+		fmt.Printf("re-signed  %s (key-id %s, valid %s)\n", certFile, e.KeyID, valid)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d re-signature(s) failed; the new CA and %s are in place", failed, transition)
+	}
+	return nil
+}
+
+// resignValidity returns the ssh-keygen -V value that gives a re-signed cert
+// the start and expiry of the cert logged in e, or a reason not to re-sign it.
+// ssh-keygen counts a relative bound from the time of signing, so a relative
+// bound logged at the original issuance becomes signed seconds from now; an
+// absolute or unbounded bound is reused as logged.
+func resignValidity(e logEntry, now time.Time) (valid, skipReason string) {
+	exp, has, err := parseExpiry(e.Valid, e.TS)
+	if err != nil {
+		return "", fmt.Sprintf("validity %q not understood: %v", e.Valid, err)
+	}
+	if has && exp.Sub(now) < time.Second {
+		return "", "expired"
+	}
+	lower, upper, isRange := strings.Cut(e.Valid, ":")
+	if !isRange {
+		lower, upper = "", e.Valid
+	}
+	if has && strings.HasPrefix(upper, "+") {
+		upper = fmt.Sprintf("+%ds", int64(exp.Sub(now)/time.Second))
+	}
+	if !isRange {
+		return upper, ""
+	}
+	if strings.HasPrefix(lower, "+") || strings.HasPrefix(lower, "-") {
+		d, err := parseSSHKeygenDuration(lower[1:])
+		if err != nil {
+			return "", fmt.Sprintf("validity %q not understood: %v", e.Valid, err)
+		}
+		ts, _ := time.Parse(time.RFC3339, e.TS)
+		if lower[0] == '-' {
+			d = -d
+		}
+		lower = fmt.Sprintf("%+ds", int64(ts.Add(d).Sub(now)/time.Second))
+	}
+	return lower + ":" + upper, ""
+}
+
+// keyFingerprint returns the SHA256 fingerprint of the public key at pubFile.
+func keyFingerprint(pubFile string) (string, error) {
+	out, err := exec.Command("ssh-keygen", "-E", "sha256", "-lf", pubFile).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("ssh-keygen -lf %s: %v\n%s", pubFile, err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return "", fmt.Errorf("ssh-keygen -lf %s: unexpected output %q", pubFile, out)
+	}
+	return fields[1], nil
+}
+
+// entryIssuer returns the SHA256 fingerprint of the CA that signed the
+// certificate logged in e: read from the certificate file when it exists,
+// else the logged ca_fingerprint, which is empty in older entries.
+// A KRL entry by key ID applies to one CA, so revocation of e can only be
+// checked with a probe signed by this CA.
+func entryIssuer(e logEntry) (string, error) {
+	if _, err := os.Stat(e.Cert); err != nil {
+		return e.CAFingerprint, nil
+	}
+	out, err := exec.Command("ssh-keygen", "-E", "sha256", "-L", "-f", e.Cert).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("ssh-keygen -L %s: %v\n%s", e.Cert, err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "Signing CA:") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "SHA256:") {
+				return f, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no signing CA in %s", e.Cert)
+}
+
+// entryRevoked reports whether the KRL at krl revokes the certificate logged
+// in e. When that certificate file is missing, it checks a certificate of the
+// same public key, key ID and principals signed by the old CA at prevPriv.
+func entryRevoked(krl, prevPriv string, e logEntry) (bool, error) {
+	if _, err := os.Stat(krl); err != nil {
+		return false, nil
+	}
+	if _, err := os.Stat(e.Cert); err == nil {
+		return certRevoked(krl, e.Cert)
+	}
+	tmp, err := os.MkdirTemp("", "sshca-rotate-")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(tmp)
+	pubBytes, err := os.ReadFile(e.Pubkey)
+	if err != nil {
+		return false, err
+	}
+	probe := filepath.Join(tmp, "probe.pub")
+	if err := os.WriteFile(probe, pubBytes, 0o600); err != nil {
+		return false, err
+	}
+	args := []string{"-s", prevPriv, "-I", e.KeyID, "-n", e.Principals, "-V", "+1m"}
+	if e.CA == "host" {
+		args = append(args, "-h")
+	}
+	if out, err := exec.Command("ssh-keygen", append(args, probe)...).CombinedOutput(); err != nil {
+		return false, fmt.Errorf("ssh-keygen probe cert: %v\n%s", err, out)
+	}
+	return certRevoked(krl, filepath.Join(tmp, "probe-cert.pub"))
+}
+
+// certRevoked reports whether the KRL at krl revokes certFile. A missing KRL
+// revokes nothing.
+func certRevoked(krl, certFile string) (bool, error) {
+	if _, err := os.Stat(krl); err != nil {
+		return false, nil
+	}
+	out, err := exec.Command("ssh-keygen", "-Q", "-f", krl, certFile).CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	// ssh-keygen -Q exits 1 when a key is revoked and 255 on other errors.
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, fmt.Errorf("ssh-keygen -Q: %v\n%s", err, out)
+}
+
+func rotateCmd(_ context.Context, cmd *cli.Command) error {
+	if err := rotateCA(caDirFromFlag(cmd), cmd.String("ca")); err != nil {
+		return cli.Exit(err.Error(), 1)
+	}
+	fmt.Println()
+	fmt.Println("Next: deliver the re-signed certs and follow the runbook in README.md, CA rotation.")
+	return nil
+}
+
+// -----------------------------------------------------------------------------
 // main — wire up commands
 // -----------------------------------------------------------------------------
 
 func main() {
-	dirFlag := &cli.StringFlag{Name: "dir", Usage: "CA directory (default: ./ca, override with $SSHCA_CA_DIR)"}
+	dirFlag := &cli.StringFlag{Name: "dir", Usage: "use a CA directory other than ./ca; takes precedence over $SSHCA_CA_DIR"}
 
 	app := &cli.Command{
 		Name:    "sshca",
@@ -663,10 +936,10 @@ func main() {
 						Usage:     "sign a pubkey into a cert using the local CA",
 						ArgsUsage: "<pubkey-file>",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "ca", Usage: "which CA to sign with: user|host", Required: true},
-							&cli.StringFlag{Name: "principal", Usage: "comma-separated principals", Required: true},
-							&cli.StringFlag{Name: "valid", Usage: "validity window (e.g. '+8h', '+52w', '20260601:20260701'); default '+8h'"},
-							&cli.StringFlag{Name: "key-id", Usage: "audit string baked into the cert (REQUIRED — your future-self audit trail)", Required: true},
+							&cli.StringFlag{Name: "ca", Usage: "user|host: user signs a client key for login, host signs a server host key", Required: true},
+							&cli.StringFlag{Name: "principal", Usage: "usernames (user CA) or hostnames (host CA) the cert is valid for, comma-separated", Required: true},
+							&cli.StringFlag{Name: "valid", Usage: "set a validity other than '+8h', as ssh-keygen -V accepts it (e.g. '+52w', '20260601:20260701')"},
+							&cli.StringFlag{Name: "key-id", Usage: "identifier written into the cert, the issuance log and sshd's auth log; used later to find or revoke the cert", Required: true},
 							dirFlag,
 						},
 						Action: certSignCmd,
@@ -675,9 +948,9 @@ func main() {
 						Name:  "list",
 						Usage: "tail the issuance log (raw JSONL by default; --principal / --expiring / --expired switch to a table)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "principal", Usage: "filter to entries with this principal"},
-							&cli.StringFlag{Name: "expiring", Usage: "show certs expiring within DURATION (e.g. 24h, 7d, 4w)"},
-							&cli.BoolFlag{Name: "expired", Usage: "include already-expired certs in the expiry view"},
+							&cli.StringFlag{Name: "principal", Usage: "show only certs issued to this principal, as a table"},
+							&cli.StringFlag{Name: "expiring", Usage: "show certs that expire within DURATION (e.g. 24h, 7d, 4w), to find certs due for renewal"},
+							&cli.BoolFlag{Name: "expired", Usage: "show certs that have already expired; combines with --expiring"},
 							dirFlag,
 						},
 						Action: certListCmd,
@@ -692,12 +965,12 @@ func main() {
 						Name:  "renew",
 						Usage: "re-sign a pubkey with a fresh cert (principal inferred from existing cert)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "pubkey-file", Usage: "path to the pubkey to re-sign", Required: true},
-							&cli.StringFlag{Name: "ca", Usage: "user|host (default: user)"},
-							&cli.StringFlag{Name: "principal", Usage: "comma-separated principals (default: inferred from existing <pubkey>-cert.pub)"},
-							&cli.StringFlag{Name: "valid", Usage: "validity window (default '+8h')"},
-							&cli.StringFlag{Name: "name", Usage: "key-id prefix (default: basename of pubkey-file)"},
-							&cli.StringFlag{Name: "ship", Usage: "scp destination for the resulting cert (e.g. 'user@host:/path')"},
+							&cli.StringFlag{Name: "pubkey-file", Usage: "public key to re-sign; its existing <name>-cert.pub is overwritten", Required: true},
+							&cli.StringFlag{Name: "ca", Usage: "set to host when renewing a host cert; default user"},
+							&cli.StringFlag{Name: "principal", Usage: "set principals when changing them or when no <name>-cert.pub exists to read them from, comma-separated"},
+							&cli.StringFlag{Name: "valid", Usage: "set a validity other than '+8h', as ssh-keygen -V accepts it (e.g. '+52w')"},
+							&cli.StringFlag{Name: "name", Usage: "key-id prefix, followed by a UTC timestamp; default the pubkey file name without .pub"},
+							&cli.StringFlag{Name: "ship", Usage: "copy the new cert with scp to this destination (e.g. 'user@host:/path'); omit to leave it local"},
 							dirFlag,
 						},
 						Action: certRenewCmd,
@@ -706,11 +979,11 @@ func main() {
 						Name:  "revoke",
 						Usage: "add a revocation entry to the KRL (by --key-id, --serial, or --pubkey-file)",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "ca", Usage: "which CA the cert was signed by: user|host", Required: true},
-							&cli.StringFlag{Name: "key-id", Usage: "revoke by cert's audit key-id (the most common path)"},
-							&cli.IntFlag{Name: "serial", Usage: "revoke by cert serial number"},
-							&cli.StringFlag{Name: "pubkey-file", Usage: "revoke a raw pubkey by file path (rare for cert systems)"},
-							&cli.StringFlag{Name: "ship", Usage: "scp destination for the updated KRL (e.g. 'user@host:/etc/ssh/revoked_keys.krl')"},
+							&cli.StringFlag{Name: "ca", Usage: "the CA that signed the cert being revoked: user|host", Required: true},
+							&cli.StringFlag{Name: "key-id", Usage: "revoke every cert carrying this key-id, as recorded in the issuance log"},
+							&cli.IntFlag{Name: "serial", Usage: "revoke by serial number, shown by cert inspect; certs from cert sign have serial 0, which this flag cannot revoke"},
+							&cli.StringFlag{Name: "pubkey-file", Usage: "revoke a plain public key by file path; when set, --key-id and --serial are ignored"},
+							&cli.StringFlag{Name: "ship", Usage: "copy the updated KRL with scp to this destination (e.g. 'user@host:/etc/ssh/revoked_keys.krl'); omit to leave it local"},
 							dirFlag,
 						},
 						Action: certRevokeCmd,
@@ -722,6 +995,15 @@ func main() {
 						Action: certKrlCmd,
 					},
 				},
+			},
+			{
+				Name:  "rotate",
+				Usage: "replace the user or host CA, keep the old one as <ca>_ca.prev, write <ca>_ca.transition.pub and re-sign the CA's certs from the issuance log",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "ca", Usage: "the CA to replace: user|host", Required: true},
+					dirFlag,
+				},
+				Action: rotateCmd,
 			},
 		},
 	}

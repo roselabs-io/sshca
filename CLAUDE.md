@@ -33,13 +33,14 @@ signature:
 
 ```json
 {
-  "ts":         "<RFC3339 UTC timestamp>",
-  "ca":         "user|host",
-  "key_id":     "<from --key-id>",
-  "principals": "<comma-joined>",
-  "valid":      "<from --valid, e.g. '+8h' or '+52w'>",
-  "pubkey":     "<path passed in>",
-  "cert":       "<path of emitted -cert.pub>"
+  "ts":             "<RFC3339 UTC timestamp>",
+  "ca":             "user|host",
+  "key_id":         "<from --key-id>",
+  "principals":     "<comma-joined>",
+  "valid":          "<from --valid, e.g. '+8h' or '+52w'>",
+  "pubkey":         "<path passed in>",
+  "cert":           "<path of emitted -cert.pub>",
+  "ca_fingerprint": "<SHA256 fingerprint of the signing CA public key>"
 }
 ```
 

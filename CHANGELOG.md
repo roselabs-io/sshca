@@ -4,6 +4,13 @@ All notable changes to `sshca` will be documented in this file.
 
 Format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is [SemVer](https://semver.org/) once we reach v1.0; until then, breaking changes can land in minor releases — see "Stability promises" in [README.md](README.md).
 
+## [Unreleased]
+
+### Added
+
+- `sshca rotate --ca user|host` — replaces a CA, keeps the old keypair as `<ca>_ca.prev`, writes `<ca>_ca.transition.pub` with both public keys, and re-signs the CA's unexpired, unrevoked certificates from the issuance log, keeping their key ID, principals and expiry. Runbook in [README.md](README.md), CA rotation.
+- Issuance log field `ca_fingerprint`: the SHA256 fingerprint of the CA that signed the certificate. Entries written before this field have none.
+
 ## [0.1.0] — 2026-05-29
 
 Initial release.

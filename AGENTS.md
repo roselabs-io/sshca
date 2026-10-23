@@ -16,12 +16,12 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `main_test.go` | the tests (`go test ./...`) |
 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` | usage, release notes, contributor notes |
 | `.github/workflows/ci.yml` | `go vet` and `go build` for six targets, `go test` on linux/amd64 |
-| `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release |
+| `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
 | `.github/workflows/sshca-audit.yml` | `just audit` on a pull request or push to `main` that changes `go.mod` or `go.sum`, weekly on `main`, and on dispatch |
 | `pipeline.yaml` | the Governor dispatcher's config for this repository |
-| `tools/local_preflight.py` | the local check the dispatcher runs: `just secrets-env`, `just check`, then `just gate` |
+| Governor's package preflight (`tools/local_preflight.py` of the Governor package, run by the dispatcher; this repository keeps no copy) | the local check the dispatcher runs: `just check`, then `just gate` |
 | `tools/secret_scan.py`, `.secrets.baseline` | the offline secret scan of the tracked files and the findings it accepts |
 
 No key or token is tracked. CA private keys stay on the operator's machine; `.gitignore` excludes
@@ -72,8 +72,9 @@ fork does not receive.
 
 A PR from a branch `agent/<N>-…` carries exactly one `Sshca-Issue: #N` line; a dispatched run also
 requires a `Sshca-Agent` line naming a configured lane. `validate` of `sshca-ci.yml` checks both.
-`sshca-pm.yml` moves issue N on the board from that line. `autonomy: gated`: every merge is left to
-a person.
+`sshca-pm.yml` moves issue N on the board from that line. `autonomy: tiered`: an approved PR merges
+through the merge queue, except the PR of a complex or exceptional ticket, whose merge is left to a
+person.
 
 A change to the CLI grammar or the issuance log schema is a contract change (`CLAUDE.md`, Contract
 surface) and is recorded in `CHANGELOG.md`.
