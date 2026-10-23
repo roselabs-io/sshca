@@ -13,6 +13,13 @@ run-name: "${{ inputs.pr_number && format('sshca CI PR #{0} {1}', inputs.pr_numb
 # version of `go.mod`, sets `GOVERNOR_JOBS` to the runner's core count, prepares the secret scan's
 # detect-secrets with `just secrets-env`, then runs `just gate`. A PR from a fork receives no
 # `GOVERNOR_PM_TOKEN`, so its `Check out the Governor package` step fails.
+#
+# On a push to `main` whose gate passes, `release-tag` reads the first `## [X.Y.Z]` heading of
+# CHANGELOG.md (`[Unreleased]` and a prerelease such as `[X.Y.Z-rc.1]` do not match). When the tag
+# `vX.Y.Z` does not exist on `origin`, it creates the tag on the pushed commit and pushes it with
+# GITHUB_TOKEN. A tag pushed with GITHUB_TOKEN starts no workflow, so `release` calls release.yml with
+# the tag. Runs on `main` are not cancelled in progress, so a later push cannot stop a release after
+# its tag exists.
 
 on:
   pull_request:
@@ -33,7 +40,7 @@ on:
 
 concurrency:
   group: sshca-ci-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -146,3 +153,45 @@ jobs:
 
       - name: Gate
         run: just gate
+
+  release-tag:
+    needs: gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Tag a new CHANGELOG version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create the tag of the newest CHANGELOG version
+        id: tag
+        run: |
+          version=$(sed -nE 's/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p' CHANGELOG.md | head -n 1)
+          if [ -z "$version" ]; then
+            echo "CHANGELOG.md has no released version heading; nothing to release"
+            exit 0
+          fi
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag exists; nothing to release"
+            exit 0
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: release-tag
+    if: needs.release-tag.outputs.tag != ''
+    name: Release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-tag.outputs.tag }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
