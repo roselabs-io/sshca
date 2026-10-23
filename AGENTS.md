@@ -15,7 +15,6 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `main.go` | the whole implementation; `version` is a `var` set with `-ldflags "-X main.version=<tag>"` at release |
 | `main_test.go` | the tests (`go test ./...`) |
 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` | usage, release notes, contributor notes |
-| `.github/workflows/ci.yml` | `go vet` and `go build` for six targets, `go test` on linux/amd64 |
 | `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
@@ -31,9 +30,9 @@ No key or token is tracked. CA private keys stay on the operator's machine; `.gi
 
 | Recipe | Runs |
 |---|---|
-| `just check` | `go vet ./...`; fails when `gofmt -l .` lists a file |
-| `just test` | `go test ./...` |
-| `just build` | `go vet` and `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
+| `just check` | `go vet ./...` with `-p "${GOVERNOR_JOBS:-1}"`; fails when `gofmt -l .` lists a file |
+| `just test` | `go test ./...` with `-p "${GOVERNOR_JOBS:-1}"` |
+| `just build` | `go vet` and `go build` with `CGO_ENABLED=0` and `-p "${GOVERNOR_JOBS:-1}"` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
 | `just secrets-env` | creates `.venv` with detect-secrets 1.5.0 through uv; needs the network; not part of the gate |
 | `just secrets` | `tools/secret_scan.py` with `.venv/bin/python`: detect-secrets over every file of `git ls-files`; fails on a finding `.secrets.baseline` does not hold, and when `.venv` is missing |
 | `just gate` | `check`, `secrets`, `test`, `build`; the deterministic gate CI runs |

@@ -2,15 +2,15 @@
 
 # Static checks: vet and formatting.
 check:
-    go vet ./...
+    go vet -p "${GOVERNOR_JOBS:-1}" ./...
     test -z "$(gofmt -l .)"
 
 # The test suite.
 test:
-    go test ./...
+    go test -p "${GOVERNOR_JOBS:-1}" ./...
 
 # `go vet` and `go build` with CGO_ENABLED=0 for the six release targets of `release.yml` (the build
-# matrix of `ci.yml`). The binaries are written to a temporary directory and removed.
+# matrix of `sshca-ci.yml`). The binaries are written to a temporary directory and removed.
 build:
     #!/usr/bin/env sh
     set -eu
@@ -18,9 +18,9 @@ build:
     trap 'rm -rf "$out"' EXIT
     for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
         echo "go vet $target"
-        CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go vet ./...
+        CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go vet -p "${GOVERNOR_JOBS:-1}" ./...
         echo "go build $target"
-        CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -o "$out/sshca-${target%/*}-${target#*/}" .
+        CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -p "${GOVERNOR_JOBS:-1}" -o "$out/sshca-${target%/*}-${target#*/}" .
     done
 
 # Creates `.venv` with detect-secrets 1.5.0 for `secrets`. Needs uv and the network; not part of the gate.
