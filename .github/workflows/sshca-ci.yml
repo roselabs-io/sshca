@@ -9,9 +9,10 @@ run-name: "${{ inputs.pr_number && format('sshca CI PR #{0} {1}', inputs.pr_numb
 # `ci.run_title` of pipeline.yaml.
 #
 # Both jobs run on GitHub-hosted `ubuntu-latest`: the repository is public, and the organization's
-# self-hosted runner group does not serve public repositories. `gate` installs `just` and the Go
-# version of `go.mod` before `just gate`. A PR from a fork receives no `GOVERNOR_PM_TOKEN`, so its
-# `Check out the Governor package` step fails.
+# self-hosted runner group does not serve public repositories. `gate` installs `just`, uv and the Go
+# version of `go.mod`, prepares the secret scan's detect-secrets with `just secrets-env`, then runs
+# `just gate`. A PR from a fork receives no `GOVERNOR_PM_TOKEN`, so its `Check out the Governor
+# package` step fails.
 
 on:
   pull_request:
@@ -129,10 +130,16 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+
       - name: Install Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      - name: Prepare the secret scan
+        run: just secrets-env
 
       - name: Gate
         run: just gate
