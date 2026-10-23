@@ -1,11 +1,19 @@
 name: sshca audit
 
+# `just audit`: govulncheck over the Go module dependencies and the standard library of the Go version
+# of `go.mod`, against the Go vulnerability database. It needs the network, so it is not part of the
+# gate of `sshca-ci.yml`, and no merge depends on it. It runs on a change to `go.mod` or `go.sum`, weekly
+# on `main` and on dispatch.
+
 on:
   pull_request:
     branches: [main]
     paths: [go.mod, go.sum]
+  push:
+    branches: [main]
+    paths: [go.mod, go.sum]
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -13,9 +21,8 @@ permissions:
 
 jobs:
   audit:
-    name: Go vulnerability audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 

@@ -9,10 +9,6 @@ check:
 test:
     go test -p "${GOVERNOR_JOBS:-1}" ./...
 
-# Scan tracked files against the reviewed detect-secrets baseline.
-secrets:
-    detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
-
 # `go vet` and `go build` with CGO_ENABLED=0 for the six release targets of `release.yml` (the build
 # matrix of `sshca-ci.yml`). The binaries are written to a temporary directory and removed.
 build:
@@ -27,12 +23,26 @@ build:
         CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -p "${GOVERNOR_JOBS:-1}" -o "$out/sshca-${target%/*}-${target#*/}" .
     done
 
+# Creates `.venv` with detect-secrets 1.5.0 for `secrets`. Needs uv and the network; not part of the gate.
+secrets-env:
+    uv venv --allow-existing .venv
+    uv pip install --python .venv detect-secrets==1.5.0
+
+# The offline secret scan of the tracked files against `.secrets.baseline` (`tools/secret_scan.py`),
+# with the Python of `.venv`. Installs nothing; exits 1 when `.venv` is missing.
+secrets:
+    #!/usr/bin/env sh
+    set -eu
+    if [ ! -x .venv/bin/python ]; then echo "secrets: .venv is missing; run: just secrets-env" >&2; exit 1; fi
+    .venv/bin/python tools/secret_scan.py
+
 # The deterministic gate CI runs.
 gate: check secrets test build
 
-# Query the Go vulnerability database outside the deterministic gate.
+# The Go module dependencies against the Go vulnerability database. Needs the network; not part of
+# the gate (`sshca-audit.yml`).
 audit:
-    go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 # Apply the formatter.
 fix:
