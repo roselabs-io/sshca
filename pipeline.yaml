@@ -26,6 +26,9 @@ autonomy: full
 checks:
   recipes:
     not_applicable: {"up": "the repository has no local stack", "down": "the repository has no local stack", "logs": "the repository has no local stack"}
+  # Offline scan of tracked files against `.secrets.baseline`.
+  commands:
+    secrets: [just, secrets]
 
 # The three documents below name AGENTS.md; `docs.operating_model` must hold a "Finding triage" section.
 docs:

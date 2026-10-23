@@ -15,7 +15,7 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `main.go` | the whole implementation; `version` is a `var` set with `-ldflags "-X main.version=<tag>"` at release |
 | `main_test.go` | the tests (`go test ./...`) |
 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` | usage, release notes, contributor notes |
-| `.github/workflows/ci.yml` | `go vet` and `go build` for six targets, `go test` on linux/amd64 |
+| `.github/workflows/sshca-audit.yml` | `just audit` on Go module changes, weekly and on dispatch |
 | `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
@@ -29,18 +29,19 @@ No key or token is tracked. CA private keys stay on the operator's machine; `.gi
 
 | Recipe | Runs |
 |---|---|
-| `just check` | `go vet ./...`; fails when `gofmt -l .` lists a file |
-| `just test` | `go test ./...` |
-| `just build` | `go vet` and `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory |
-| `just gate` | `check`, `test`, `build`; the deterministic gate CI runs |
+| `just check` | parallelized `go vet` and format check; `GOVERNOR_JOBS` defaults to 1 |
+| `just test` | parallelized `go test`; `GOVERNOR_JOBS` defaults to 1 |
+| `just secrets` | scans tracked files against `.secrets.baseline` using detect-secrets 1.5.0; install it with `uv tool install detect-secrets==1.5.0` |
+| `just build` | `go vet` and `go build` with `CGO_ENABLED=0` for linux, darwin and windows on amd64 and arm64, into a temporary directory; `GOVERNOR_JOBS` defaults to 1 |
+| `just gate` | `check`, `secrets`, `test`, `build`; the deterministic gate CI runs |
+| `just audit` | runs govulncheck 1.1.4; requires network access and is separate from the deterministic gate |
 | `just fix` | `gofmt -w .` |
 | `just ff` | switches to `main` and fast-forwards it from `origin`; refuses local changes or a diverged `main` |
 
 `up`, `down` and `logs` are not applicable (`checks.recipes.not_applicable` of `pipeline.yaml`):
-there is no local stack. `just` and Go are required.
+there is no local stack. `just` and Go are required; `just secrets` and `just gate` also require
+detect-secrets 1.5.0, installed with `uv tool install detect-secrets==1.5.0`.
 
-There is no `just audit` recipe. The gate does not scan for secrets and does not audit dependencies
-(sshca#2).
 
 ## CI
 

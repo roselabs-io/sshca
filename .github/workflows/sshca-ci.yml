@@ -3,13 +3,13 @@ run-name: "${{ inputs.pr_number && format('sshca CI PR #{0} {1}', inputs.pr_numb
 
 # `validate` checks the PR, its `Sshca-Issue` marker and, on a dispatched run, its `Sshca-Agent` line
 # (a lane of `routing.lanes` of pipeline.yaml; a lane stored through the API in `lanes.json` is not on the
-# runner and fails the check) with `governor/pr_issue.py` of the Governor package; `gate` runs `gate.command` of pipeline.yaml. A dispatched run (`expected_head_sha` set, run on
+# runner and fails the check) with `governor/pr_issue.py` of the Governor package; `gate` runs `gate.command` of pipeline.yaml after installing just, uv, detect-secrets and the Go version from go.mod. A dispatched run (`expected_head_sha` set, run on
 # `main`) merges `expected_head_sha` into `main` with `--no-ff` before testing; a conflict fails the
 # `Merge conflict check` step, which the dispatcher reads. The run name of a dispatched run is
 # `ci.run_title` of pipeline.yaml.
 #
 # Both jobs run on GitHub-hosted `ubuntu-latest`: the repository is public, and the organization's
-# self-hosted runner group does not serve public repositories. `gate` installs `just` and the Go
+# self-hosted runner group does not serve public repositories. `gate` installs `just`, uv, detect-secrets and the Go
 # version of `go.mod` before `just gate`. A PR from a fork receives no `GOVERNOR_PM_TOKEN`, so its
 # `Check out the Governor package` step fails.
 
@@ -129,10 +129,19 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install detect-secrets
+        run: uv tool install detect-secrets==1.5.0
+
       - name: Install Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      - name: Set GOVERNOR_JOBS to the core count
+        run: echo "GOVERNOR_JOBS=$(getconf _NPROCESSORS_ONLN)" >> "$GITHUB_ENV"
 
       - name: Gate
         run: just gate

@@ -1,0 +1,31 @@
+name: sshca audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [go.mod, go.sum]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Go vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Audit
+        run: just audit
