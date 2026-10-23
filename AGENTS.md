@@ -15,8 +15,8 @@ A Go CLI (`go.mod`: `go 1.25.5`, one dependency, `urfave/cli/v3`). Signing is `s
 | `main.go` | the whole implementation; `version` is a `var` set with `-ldflags "-X main.version=<tag>"` at release |
 | `main_test.go` | the tests (`go test ./...`) |
 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` | usage, release notes, contributor notes |
-| `.github/workflows/release.yml` | on a `v*` tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
-| `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`) |
+| `.github/workflows/release.yml` | on a pushed `v*` tag, or called by `release` of `sshca-ci.yml` with a tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
+| `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`); on a push to `main`, `release-tag` and `release` (Releases) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
 | `.github/workflows/sshca-audit.yml` | `just audit` on a pull request or push to `main` that changes `go.mod` or `go.sum`, weekly on `main`, and on dispatch |
 | `pipeline.yaml` | the Governor dispatcher's config for this repository |
@@ -66,6 +66,31 @@ All workflows run on GitHub-hosted `ubuntu-latest`. The repository is public; th
 self-hosted runners do not serve it. `validate` and `sshca-pm.yml` check out the private
 `roselabs-io/governor` with the organization secret `GOVERNOR_PM_TOKEN`, which a workflow run from a
 fork does not receive.
+
+## Releases
+
+A release is made by a PR that adds a version heading `## [X.Y.Z] — YYYY-MM-DD` to `CHANGELOG.md`,
+above the previous one, usually by renaming `[Unreleased]` and adding an empty `[Unreleased]` above it.
+After the PR merges, the push to `main` runs `sshca-ci.yml`; when `gate` passes:
+
+1. `release-tag` reads the first heading of `CHANGELOG.md` of the form `## [X.Y.Z]`. `[Unreleased]`
+   and a prerelease heading (`[X.Y.Z-rc.1]`) do not match.
+2. When the tag `vX.Y.Z` does not exist, it creates it on the pushed commit and pushes it with
+   `GITHUB_TOKEN`.
+3. `release` calls `release.yml` with the tag: the six archives, `checksums.txt`, the GitHub Release
+   and the `formula-update` dispatch.
+
+A push whose first version heading already has its tag releases nothing. A tag pushed with
+`GITHUB_TOKEN` starts no workflow, so `release.yml` runs through the call, not through its tag
+trigger; a tag pushed by a person still runs it. Prerelease tags are not created from CI.
+
+Runs of `sshca-ci.yml` on `main` are not cancelled in progress. A run still waiting when a newer push
+arrives is cancelled, and the newer run tags its own commit, which contains the waiting one; when both
+pushes add a version heading, only the newer version is released. When the release fails after the
+tag exists, the next push does not retry it: re-run the failed jobs of the run.
+
+A bad release is not deleted: revert on `main` and merge a new patch heading, which releases the next
+version. The tap formula is rolled back by reverting its commit in `roselabs-io/homebrew-tools`.
 
 ## Pull requests
 

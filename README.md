@@ -291,6 +291,14 @@ Post-1.0: [SemVer](https://semver.org/), covering two surfaces.
   may be added in a minor release; existing fields are not renamed or removed
   without a major version bump.
 
+## Releases
+
+A merge to `main` that passes CI and adds a version heading `## [X.Y.Z] — YYYY-MM-DD` to
+[CHANGELOG.md](CHANGELOG.md) creates the tag `vX.Y.Z`, the GitHub Release with its archives and
+checksums, and the update of the `sshca` formula in `roselabs-io/homebrew-tools`. A merge that adds no
+new version heading releases nothing. To release, rename `[Unreleased]` to the version and date in
+the PR. [AGENTS.md](AGENTS.md), Releases, describes the jobs.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

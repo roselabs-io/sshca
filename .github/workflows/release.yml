@@ -1,4 +1,5 @@
-# Release — triggered by pushing a tag matching v*.
+# Release — on a pushed tag matching v*, or called by the `release`
+# job of sshca-ci.yml with the tag it created as input `tag`.
 #
 # Builds the 6-platform release matrix, packages each as a
 # .tar.gz (Unix) or .zip (Windows), generates a sha256 checksums
@@ -12,17 +13,32 @@
 # the dispatch uses the secret HOMEBREW_TAP_TOKEN, a token that can
 # write to roselabs-io/homebrew-tools.
 #
-# Version is injected via -ldflags so `sshca --version` reports
-# the actual git tag rather than the source-default "0.1.0-dev".
+# TAG is input `tag` under workflow_call, where github.ref_name is the
+# caller's branch, and github.ref_name on a tag push. It is the version
+# injected via -ldflags, so `sshca --version` reports the tag rather
+# than the source-default "0.1.0-dev", and it names the archives and
+# the Release.
 
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to release, for example v0.2.0
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
 
 permissions:
   contents: write  # required to create the GitHub Release
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -40,6 +56,8 @@ jobs:
           - { goos: windows, goarch: arm64, ext: .exe }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-go@v5
         with:
@@ -54,14 +72,14 @@ jobs:
         run: |
           mkdir -p dist
           go build \
-            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -ldflags "-s -w -X main.version=${TAG}" \
             -trimpath \
             -o dist/sshca${{ matrix.ext }} .
 
       - name: Package
         run: |
           cd dist
-          archive_base="sshca-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          archive_base="sshca-${TAG}-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip "../${archive_base}.zip" sshca.exe
           else
@@ -82,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -103,16 +123,17 @@ jobs:
             dist/sshca-*-*.tar.gz
             dist/sshca-*-*.zip
             dist/checksums.txt
+          tag_name: ${{ env.TAG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
 
   homebrew:
     name: Notify the Homebrew tap
     needs: release
     # A prerelease tag (one containing '-') does not update the formula.
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Send repository_dispatch to roselabs-io/homebrew-tools
@@ -122,4 +143,4 @@ jobs:
           gh api repos/roselabs-io/homebrew-tools/dispatches \
             -f event_type=formula-update \
             -f 'client_payload[tool]=sshca' \
-            -f "client_payload[tag]=${GITHUB_REF_NAME}"
+            -f "client_payload[tag]=${TAG}"
