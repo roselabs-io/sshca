@@ -20,10 +20,6 @@ Thumbs.db
 ca/
 *.pem
 *.key
-*-cert.pub.local
 
 # detect-secrets environment of `just secrets-env`
 .venv/
-
-# Local config
-*.local.yaml
