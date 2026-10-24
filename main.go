@@ -1,8 +1,7 @@
 // sshca — SSH-only certificate authority and management CLI.
 //
-// Single binary, two intended deps, JSONL audit by default.
+// Single binary, one dependency, JSONL audit by default.
 // Bus-factor-zero design: operable without tribal knowledge.
-// See docs/decisions/inherited.md for the upstream ADRs that motivated this tool.
 package main
 
 import (
@@ -114,7 +113,7 @@ func caShowCmd(_ context.Context, cmd *cli.Command) error {
 //
 // The audit log schema (at <dir>/issuance-log.jsonl) is part of sshca's
 // contract surface — downstream consumers depend on it. See
-// docs/reference/contracts.md (TBD).
+// AGENTS.md, Contract surface.
 func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile string, err error) {
 	var caPriv string
 	switch ca {

@@ -24,7 +24,7 @@ SSH certificate authority and management CLI: a single Go binary (`go.mod`: `go 
 | `tools/secret_scan.py`, `.secrets.baseline` | the offline secret scan of the tracked files and the findings it accepts |
 
 No key or token is tracked. CA private keys stay on the operator's machine; `.gitignore` excludes
-`ca/`, `*.pem`, `*.key` and `*-cert.pub.local`.
+`ca/`, `*.pem` and `*.key`.
 
 ## Scope
 
