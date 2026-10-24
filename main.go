@@ -113,7 +113,7 @@ func caShowCmd(_ context.Context, cmd *cli.Command) error {
 //
 // The audit log schema (at <dir>/issuance-log.jsonl) is part of sshca's
 // contract surface — downstream consumers depend on it. See
-// docs/reference/contracts.md (TBD).
+// AGENTS.md, Contract surface.
 func signCert(dir, ca, principal, valid, keyID, pubkeyFile string) (certFile string, err error) {
 	var caPriv string
 	switch ca {
