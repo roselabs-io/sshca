@@ -96,9 +96,9 @@ version. The tap formula is rolled back by reverting its commit in `roselabs-io/
 
 A PR from a branch `agent/<N>-…` carries exactly one `Sshca-Issue: #N` line; a dispatched run also
 requires a `Sshca-Agent` line naming a configured lane. `validate` of `sshca-ci.yml` checks both.
-`sshca-pm.yml` moves issue N on the board from that line. `autonomy: tiered`: an approved PR merges
-through the merge queue, except the PR of a complex or exceptional ticket, whose merge is left to a
-person.
+`sshca-pm.yml` moves issue N on the board from that line. `autonomy: full`: every approved PR merges
+through the merge queue. A ticket with `merge: manual` in its metadata block, or a PR that changes a
+path matching `review.protected_paths`, is still left to a person.
 
 A change to the CLI grammar or the issuance log schema is a contract change (`CLAUDE.md`, Contract
 surface) and is recorded in `CHANGELOG.md`.
