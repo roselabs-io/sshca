@@ -1,8 +1,7 @@
 // sshca — SSH-only certificate authority and management CLI.
 //
-// Single binary, two intended deps, JSONL audit by default.
+// Single binary, one dependency, JSONL audit by default.
 // Bus-factor-zero design: operable without tribal knowledge.
-// See docs/decisions/inherited.md for the upstream ADRs that motivated this tool.
 package main
 
 import (
