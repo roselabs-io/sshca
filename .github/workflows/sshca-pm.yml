@@ -1,6 +1,6 @@
 name: sshca PM sync
 
-# Runs `governor/ticket_sync.py` of the Governor package with `tickets.*` of pipeline.yaml: every issue
+# Runs `governor-ticket-sync` of the Governor package with `tickets.*` of pipeline.yaml: every issue
 # with a `sshca-pm` block is added to the organization project `Governor` (number 2, `tickets.project` of pipeline.yaml), with its fields set from the
 # block. A PR's `Sshca-Issue: #N` line moves issue N to In progress (draft) or Review (ready), and a
 # merge into `main` closes it as Done.
@@ -56,7 +56,7 @@ jobs:
       - name: Synchronize GitHub project management metadata
         run: |
           set -o pipefail
-          uv run --frozen --no-dev --project .governor-package python .governor-package/governor/ticket_sync.py 2>&1 | tee "$RUNNER_TEMP/sshca-pm.log"
+          uv run --frozen --no-dev --project .governor-package governor-ticket-sync 2>&1 | tee "$RUNNER_TEMP/sshca-pm.log"
 
       - name: Report PM sync failure
         if: failure() && (github.event.issue.number || github.event.pull_request.number)

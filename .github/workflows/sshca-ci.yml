@@ -3,7 +3,7 @@ run-name: "${{ inputs.pr_number && format('sshca CI PR #{0} {1}', inputs.pr_numb
 
 # `validate` checks the PR, its `Sshca-Issue` marker and, on a dispatched run, its `Sshca-Agent` line
 # (a lane of `routing.lanes` of pipeline.yaml; a lane stored through the API in `lanes.json` is not on the
-# runner and fails the check) with `governor/pr_issue.py` of the Governor package; `gate` runs `gate.command` of pipeline.yaml. A dispatched run (`expected_head_sha` set, run on
+# runner and fails the check) with `governor-pr-issue` of the Governor package; `gate` runs `gate.command` of pipeline.yaml. A dispatched run (`expected_head_sha` set, run on
 # `main`) merges `expected_head_sha` into `main` with `--no-ff` before testing; a conflict fails the
 # `Merge conflict check` step, which the dispatcher reads. The run name of a dispatched run is
 # `ci.run_title` of pipeline.yaml.
@@ -111,7 +111,7 @@ jobs:
         if: github.event_name == 'pull_request' || inputs.pr_number != ''
         env:
           PIPELINE_CONFIG: ${{ github.workspace }}/pipeline.yaml
-        run: uv run --frozen --no-dev --project .governor-package python .governor-package/governor/pr_issue.py "$RUNNER_TEMP/sshca-pr.json" ${{ github.event_name != 'pull_request' && '--dispatched' || '' }}
+        run: uv run --frozen --no-dev --project .governor-package governor-pr-issue "$RUNNER_TEMP/sshca-pr.json" ${{ github.event_name != 'pull_request' && '--dispatched' || '' }}
 
   gate:
     needs: validate
