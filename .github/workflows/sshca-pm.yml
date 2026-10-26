@@ -5,9 +5,12 @@ name: sshca PM sync
 # block. A PR's `Sshca-Issue: #N` line moves issue N to In progress (draft) or Review (ready), and a
 # merge into `main` closes it as Done.
 #
-# `GOVERNOR_PM_TOKEN` is an organization secret holding a token that can read and write the organization's projects and
-# the repository's issues, and read the Governor package repository; a repository secret of the same name overrides
-# it. `github.token` cannot write an organization project.
+# `GOVERNOR_PM_TOKEN` is a secret of the Bitwarden project `roselabs-ci`, whose id is the organization variable
+# `BWS_SHARED_PROJECT_ID`. A step reads it with `bws run`, authenticated by the secret `BWS_ACCESS_TOKEN`
+# (`dependencies-security-posture.md` of the org layer, Secrets in CI), masks it and writes it to `$GITHUB_ENV`, where
+# the Governor checkout and the sync read it. It is a token that can read and write the organization's projects and
+# the repository's issues, and read the Governor package repository. `github.token` cannot write an organization
+# project.
 
 on:
   push:
@@ -38,16 +41,44 @@ jobs:
       pull-requests: write
       actions: read
     env:
-      GOVERNOR_PM_TOKEN: ${{ secrets.GOVERNOR_PM_TOKEN }}
       PIPELINE_CONFIG: ${{ github.workspace }}/pipeline.yaml
     steps:
       - uses: actions/checkout@v7
+
+      # `bws` 2.1.0 from the releases of bitwarden/sdk-sm, checked against its SHA-256 and run from $RUNNER_TEMP
+      # (`dependencies-security-posture.md` of the org layer, Secrets in CI).
+      - name: Install bws
+        run: |
+          case "$RUNNER_ARCH" in
+            ARM64) target=aarch64-unknown-linux-gnu; sum=18253757286e119d450133a87eb463bf8c1ce418ce24c834f4f250d60cba6f9e ;;
+            X64) target=x86_64-unknown-linux-gnu; sum=ba8233c3a4aee5d43e3c73bbd04d99e9bc5aba13bbbfd06d89b073abe732b860 ;;
+            *) echo "::error::no bws build for runner architecture $RUNNER_ARCH"; exit 1 ;;
+          esac
+          curl -fsSL -o "$RUNNER_TEMP/bws.zip" "https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-$target-2.1.0.zip"
+          echo "$sum  $RUNNER_TEMP/bws.zip" | sha256sum --check --quiet
+          python3 -m zipfile -e "$RUNNER_TEMP/bws.zip" "$RUNNER_TEMP/bws"
+          chmod +x "$RUNNER_TEMP/bws/bws"
+          echo "$RUNNER_TEMP/bws" >> "$GITHUB_PATH"
+
+      # Masked, then in the environment of the later steps, where actions/checkout and the sync read it.
+      - name: Read GOVERNOR_PM_TOKEN from Bitwarden Secrets Manager
+        env:
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+          BWS_PROJECT_ID: ${{ vars.BWS_SHARED_PROJECT_ID }}
+        run: |
+          # The variables expand in the shell `bws run` starts, where the secrets are set.
+          # shellcheck disable=SC2016
+          bws run --project-id "$BWS_PROJECT_ID" -- '
+            test -n "$GOVERNOR_PM_TOKEN" || { echo "::error::GOVERNOR_PM_TOKEN is not in the Bitwarden project $BWS_PROJECT_ID"; exit 1; }
+            echo "::add-mask::$GOVERNOR_PM_TOKEN"
+            echo "GOVERNOR_PM_TOKEN=$GOVERNOR_PM_TOKEN" >> "$GITHUB_ENV"
+          '
 
       - name: Check out the Governor package
         uses: actions/checkout@v7
         with:
           repository: roselabs-io/governor
-          token: ${{ secrets.GOVERNOR_PM_TOKEN }}
+          token: ${{ env.GOVERNOR_PM_TOKEN }}
           path: .governor-package
 
       - name: Install uv

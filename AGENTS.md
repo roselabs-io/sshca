@@ -15,7 +15,7 @@ SSH certificate authority and management CLI: a single Go binary (`go.mod`: `go 
 | `README.md`, `CHANGELOG.md` | usage, release notes |
 | `CLAUDE.md` | the line `@AGENTS.md`, which makes Claude Code read this file |
 | `.gemini/settings.json` | sets `context.fileName` to `AGENTS.md`, which makes Gemini CLI read this file |
-| `.github/workflows/release.yml` | on a pushed `v*` tag, or called by `release` of `sshca-ci.yml` with a tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with the secret `HOMEBREW_TAP_TOKEN` |
+| `.github/workflows/release.yml` | on a pushed `v*` tag, or called by `release` of `sshca-ci.yml` with a tag: builds six targets, archives, `checksums.txt`, a GitHub Release; then, unless the tag contains `-`, a `repository_dispatch` (`formula-update`, `tool`, `tag`) to `roselabs-io/homebrew-tools` with `HOMEBREW_TAP_TOKEN`, read from Bitwarden Secrets Manager |
 | `.github/workflows/sshca-ci.yml` | `validate` (PR metadata) and `gate` (`just gate`); on a push to `main`, `release-tag` and `release` (Releases) |
 | `.github/workflows/sshca-pm.yml` | the issue and board sync of Governor |
 | `.github/workflows/sshca-audit.yml` | `just audit` on a pull request or push to `main` that changes `go.mod` or `go.sum`, weekly on `main`, and on dispatch |
@@ -124,8 +124,14 @@ on the Go version that runs it.
 
 All workflows run on GitHub-hosted `ubuntu-latest`. The repository is public; the organization's
 self-hosted runners do not serve it. `validate` and `sshca-pm.yml` check out the private
-`roselabs-io/governor` with the organization secret `GOVERNOR_PM_TOKEN`, which a workflow run from a
-fork does not receive.
+`roselabs-io/governor` with `GOVERNOR_PM_TOKEN`.
+
+`GOVERNOR_PM_TOKEN` and `HOMEBREW_TAP_TOKEN` are secrets of the Bitwarden Secrets Manager project
+`roselabs-ci`, whose id is the organization variable `BWS_SHARED_PROJECT_ID`. A step installs `bws`
+2.1.0 (SHA-256 checked) and reads them with `bws run`, which authenticates with the GitHub secret
+`BWS_ACCESS_TOKEN`. A value an action reads through `with:` is masked and written to `$GITHUB_ENV`
+first. Besides `GITHUB_TOKEN`, `BWS_ACCESS_TOKEN` is the only GitHub secret the workflows read. A workflow run from a fork does not
+receive it.
 
 ## Releases
 
