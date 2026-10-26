@@ -22,8 +22,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: sshca-pm-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: false
+  # Issue events share one group per repository and cancel the run before them; each run syncs every issue
+  # updated since the last successful issue-event run, so a burst of edits costs one or two runs. A PR event
+  # moves its issue from the event itself, so each PR has its own group and its runs are not cancelled.
+  group: ${{ github.event_name == 'issues' && 'sshca-pm' || format('sshca-pm-{0}', github.event.pull_request.number || github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'issues' }}
 
 jobs:
   sync:
@@ -33,9 +36,9 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+      actions: read
     env:
       GOVERNOR_PM_TOKEN: ${{ secrets.GOVERNOR_PM_TOKEN }}
-      SSHCA_PM_ISSUE_NUMBER: ${{ github.event.issue.number }}
       PIPELINE_CONFIG: ${{ github.workspace }}/pipeline.yaml
     steps:
       - uses: actions/checkout@v7
@@ -52,6 +55,17 @@ jobs:
         with:
           enable-cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-glob: .governor-package/uv.lock
+
+      # The creation time of the last successful issue-event run; empty when there is none, and the sync then
+      # reads the first 100 issues.
+      - name: Find the last completed issue sync
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          since=$(gh run list --workflow sshca-pm.yml --event issues --status success --limit 1 --json createdAt --jq '.[0].createdAt // ""')
+          echo "SSHCA_PM_SINCE=$since" >> "$GITHUB_ENV"
 
       - name: Synchronize GitHub project management metadata
         run: |
