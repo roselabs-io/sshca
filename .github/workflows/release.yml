@@ -10,8 +10,12 @@
 # repository_dispatch event (type `formula-update`, payload `tool`, `tag`)
 # to roselabs-io/homebrew-tools, whose workflow updates
 # Formula/sshca.rb. GITHUB_TOKEN cannot reach another repository, so
-# the dispatch uses the secret HOMEBREW_TAP_TOKEN, a token that can
-# write to roselabs-io/homebrew-tools.
+# the dispatch uses HOMEBREW_TAP_TOKEN, a token that can write to
+# roselabs-io/homebrew-tools. It is a secret of the Bitwarden project
+# `roselabs-ci`, whose id is the organization variable
+# BWS_SHARED_PROJECT_ID; the dispatch step reads it with `bws run`,
+# authenticated by the secret BWS_ACCESS_TOKEN
+# (`dependencies-security-posture.md` of the org layer, Secrets in CI).
 #
 # TAG is input `tag` under workflow_call, where github.ref_name is the
 # caller's branch, and github.ref_name on a tag push. It is the version
@@ -31,7 +35,7 @@ on:
         required: true
         type: string
     secrets:
-      HOMEBREW_TAP_TOKEN:
+      BWS_ACCESS_TOKEN:
         required: true
 
 permissions:
@@ -136,11 +140,32 @@ jobs:
     if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
+      # `bws` 2.1.0 from the releases of bitwarden/sdk-sm, checked against its SHA-256 and run from $RUNNER_TEMP
+      # (`dependencies-security-posture.md` of the org layer, Secrets in CI).
+      - name: Install bws
+        run: |
+          case "$RUNNER_ARCH" in
+            ARM64) target=aarch64-unknown-linux-gnu; sum=18253757286e119d450133a87eb463bf8c1ce418ce24c834f4f250d60cba6f9e ;;
+            X64) target=x86_64-unknown-linux-gnu; sum=ba8233c3a4aee5d43e3c73bbd04d99e9bc5aba13bbbfd06d89b073abe732b860 ;;
+            *) echo "::error::no bws build for runner architecture $RUNNER_ARCH"; exit 1 ;;
+          esac
+          curl -fsSL -o "$RUNNER_TEMP/bws.zip" "https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-$target-2.1.0.zip"
+          echo "$sum  $RUNNER_TEMP/bws.zip" | sha256sum --check --quiet
+          python3 -m zipfile -e "$RUNNER_TEMP/bws.zip" "$RUNNER_TEMP/bws"
+          chmod +x "$RUNNER_TEMP/bws/bws"
+          echo "$RUNNER_TEMP/bws" >> "$GITHUB_PATH"
+
       - name: Send repository_dispatch to roselabs-io/homebrew-tools
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+          BWS_PROJECT_ID: ${{ vars.BWS_SHARED_PROJECT_ID }}
         run: |
-          gh api repos/roselabs-io/homebrew-tools/dispatches \
-            -f event_type=formula-update \
-            -f 'client_payload[tool]=sshca' \
-            -f "client_payload[tag]=${TAG}"
+          # The variables expand in the shell `bws run` starts, where the secrets are set.
+          # shellcheck disable=SC2016
+          bws run --project-id "$BWS_PROJECT_ID" -- '
+            test -n "$HOMEBREW_TAP_TOKEN" || { echo "::error::HOMEBREW_TAP_TOKEN is not in the Bitwarden project $BWS_PROJECT_ID"; exit 1; }
+            GH_TOKEN=$HOMEBREW_TAP_TOKEN gh api repos/roselabs-io/homebrew-tools/dispatches \
+              -f event_type=formula-update \
+              -f "client_payload[tool]=sshca" \
+              -f "client_payload[tag]=$TAG"
+          '
