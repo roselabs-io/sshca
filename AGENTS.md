@@ -128,9 +128,9 @@ self-hosted runners do not serve it. `validate` and `sshca-pm.yml` check out the
 
 `GOVERNOR_PM_TOKEN` and `HOMEBREW_TAP_TOKEN` are secrets of the Bitwarden Secrets Manager project
 `roselabs-ci`, whose id is the organization variable `BWS_SHARED_PROJECT_ID`. A step installs `bws`
-2.1.0 (SHA-256 checked) and reads them with `bws run`, authenticated by the secret `BWS_ACCESS_TOKEN`;
-a value an action reads through `with:` is masked and written to `$GITHUB_ENV` first. `BWS_ACCESS_TOKEN`
-is the only secret the workflows read besides `GITHUB_TOKEN`. A workflow run from a fork does not
+2.1.0 (SHA-256 checked) and reads them with `bws run`, which authenticates with the GitHub secret
+`BWS_ACCESS_TOKEN`. A value an action reads through `with:` is masked and written to `$GITHUB_ENV`
+first. Besides `GITHUB_TOKEN`, `BWS_ACCESS_TOKEN` is the only GitHub secret the workflows read. A workflow run from a fork does not
 receive it.
 
 ## Releases
