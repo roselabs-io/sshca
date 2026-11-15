@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to `sshca` will be documented in this file.
+
+Format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is [SemVer](https://semver.org/) once we reach v1.0; until then, breaking changes can land in minor releases — see "Stability promises" in [README.md](README.md).
+
+## [Unreleased]
+
+### Changed
+
+- Documentation and test fixtures use neutral example names.
+
+### Added
+
+- `sshca rotate --ca user|host` — replaces a CA, keeps the old keypair as `<ca>_ca.prev`, writes `<ca>_ca.transition.pub` with both public keys, and re-signs the CA's unexpired, unrevoked certificates from the issuance log, keeping their key ID, principals and expiry. Runbook in [README.md](README.md), CA rotation.
+- Issuance log field `ca_fingerprint`: the SHA256 fingerprint of the CA that signed the certificate. Entries written before this field have none.
+
+## [0.1.0] — 2026-05-29
+
+Initial release.
+
+### Added — CA management
+
+- `sshca ca init` — generates user and host CA keypairs at mode 0600. Refuses to overwrite existing CAs.
+- `sshca ca show` — prints CA public keys + SHA-256 fingerprints.
+
+### Added — Cert signing
+
+- `sshca cert sign --ca user|host --principal X --valid +8h --key-id ID <pubkey>` — wraps `ssh-keygen -s`. `--key-id` is required and is the issuance log's primary key.
+- Every successful sign appends a JSONL entry to `<ca-dir>/issuance-log.jsonl`. Schema documented in [README.md](README.md), Stability.
+
+### Added — Cert lifecycle
+
+- `sshca cert inspect <cert-file>` — shows a certificate's contents. Wraps `ssh-keygen -L`.
+- `sshca cert renew --pubkey-file <path>` — re-signs, taking principals from the existing `<pubkey>-cert.pub`. Optional `--ship <user@host:/path>` to scp the new cert to a destination.
+- `sshca cert revoke --ca user|host --key-id <ID>` — appends to local KRL at `<ca-dir>/revoked_keys.krl`. Optional `--ship <user@host:/path>` to scp the updated KRL (sshd re-reads on every connection — no reload needed).
+- `sshca cert krl` — local KRL metadata.
+
+### Added — Audit log queries
+
+- `sshca cert list` — reads the issuance log as JSONL.
+- `sshca cert list --principal <X>` — table of entries carrying that principal.
+- `sshca cert list --expiring <DURATION>` — tabular view of certs whose expiry falls within `now + DURATION` (e.g. `24h`, `7d`, `4w`). Sorted by expiry, ascending.
+- `sshca cert list --expired` — already-expired certs (composable with `--expiring`).
+
+### Added — Cross-platform
+
+- Single Go binary for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`, `windows/amd64`, `windows/arm64`.
+
+### Added — Distribution
+
+- GitHub Actions CI: build + vet matrix on every push/PR across all six platforms.
+- GitHub Actions release pipeline: on `v*` tag push, builds the six-platform matrix with `-ldflags "-X main.version=$TAG"` injection, packages as `.tar.gz` (Unix) / `.zip` (Windows), generates SHA-256 checksums, and attaches everything to an auto-released GitHub Release.
+
+### Added — Tests
+
+- 9 unit + integration tests covering `parseSSHKeygenDuration` (all units + edge cases), `parseExpiry` (relative / absolute / `always` / range forms), `formatTimeLeft`, and `signCert` integration paths (user CA + host CA + invalid-CA + missing-CA + audit log shape + `inferPrincipalFromCert` round-trip).
+
+[0.1.0]: https://github.com/roselabs-io/sshca/releases/tag/v0.1.0
